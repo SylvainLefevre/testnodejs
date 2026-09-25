@@ -1,0 +1,44 @@
+{
+  "live": {
+    "categories": {
+      "mode": "blacklist",
+      "ids": [],
+      "namePatterns": ["adult", "xxx"]
+    },
+    "includeKeywords": [],
+    "excludeKeywords": ["XXX", "ADULT"],
+    "includeRegex": null,
+    "excludeRegex": null,
+    "includeLanguagePrefixes": ["FR"]
+  },
+  "vod": {
+    "categories": {
+      "mode": "whitelist",
+      "ids": [],
+      "namePatterns": ["^films.*fr", "^movies.*french"]
+    },
+    "includeKeywords": [],
+    "excludeKeywords": [],
+    "includeRegex": null,
+    "excludeRegex": null,
+    "includeLanguagePrefixes": [],
+    "minRating": 0,
+    "minYear": null,
+    "maxYear": null
+  },
+  "series": {
+    "categories": {
+      "mode": "blacklist",
+      "ids": [],
+      "namePatterns": ["adult"]
+    },
+    "includeKeywords": [],
+    "excludeKeywords": [],
+    "includeRegex": null,
+    "excludeRegex": null,
+    "includeLanguagePrefixes": [],
+    "minRating": 0,
+    "minYear": null,
+    "maxYear": null
+  }
+}

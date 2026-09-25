@@ -1,0 +1,1155 @@
+[
+  {
+    "id": "0000000000000001",
+    "type": "tab",
+    "label": "Xtream Filter API",
+    "disabled": false,
+    "info": "Filtre une source Xtream Codes (live/vod/series) selon des règles configurables et republie un catalogue filtré via une API compatible Xtream (player_api.php, get.php). Ne relaie jamais le flux vidéo lui-même : la lecture se fait directement depuis le serveur source.",
+    "env": []
+  },
+  {
+    "id": "0000000000000002",
+    "type": "comment",
+    "z": "0000000000000001",
+    "name": "1. Config & rafraîchissement du cache (catégories + éléments filtrés)",
+    "info": "",
+    "x": 150,
+    "y": 20,
+    "wires": []
+  },
+  {
+    "id": "0000000000000003",
+    "type": "inject",
+    "z": "0000000000000001",
+    "name": "Au déploiement",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": true,
+    "onceDelay": 1,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 150,
+    "y": 140,
+    "wires": [
+      [
+        "0000000000000005"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000004",
+    "type": "inject",
+    "z": "0000000000000001",
+    "name": "Rafraîchissement périodique (éditer l'intervalle ici)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "21600",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 150,
+    "y": 300,
+    "wires": [
+      [
+        "0000000000000006"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000005",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Charger config.json + filters.json",
+    "func": "const configLoader = global.get('configLoader');\nconst configDir = env.get('XTREAM_CONFIG_DIR') || '/home/pi/.node-red/xtream-filter/config';\ntry {\n    const { config, filters } = configLoader.loadAll(configDir);\n    global.set('xtreamConfig', config);\n    global.set('filterRules', filters);\n    node.status({ fill: 'green', shape: 'dot', text: 'config chargée' });\n} catch (err) {\n    node.error('Erreur chargement config: ' + err.message, msg);\n    node.status({ fill: 'red', shape: 'ring', text: 'erreur config' });\n    return null;\n}\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 350,
+    "y": 140,
+    "wires": [
+      [
+        "0000000000000006"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000006",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Démarrer rafraîchissement (fan-out live/vod/series)",
+    "func": "node.status({ fill: 'blue', shape: 'dot', text: 'rafraîchissement en cours...' });\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 550,
+    "y": 220,
+    "wires": [
+      [
+        "0000000000000008",
+        "000000000000000e",
+        "0000000000000014"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000007",
+    "type": "comment",
+    "z": "0000000000000001",
+    "name": "2. Branche LIVE : fetch source -> filtre -> cache global",
+    "info": "",
+    "x": 750,
+    "y": 20,
+    "wires": []
+  },
+  {
+    "id": "0000000000000008",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Préparer requête get_live_categories",
+    "func": "const xtreamClient = global.get('xtreamClient');\nconst cfg = global.get('xtreamConfig');\nmsg.url = xtreamClient.playerApiUrl(cfg.source, 'get_live_categories');\nmsg.method = 'GET';\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 750,
+    "y": 140,
+    "wires": [
+      [
+        "0000000000000009"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000009",
+    "type": "http request",
+    "z": "0000000000000001",
+    "name": "GET get_live_categories (source)",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 950,
+    "y": 140,
+    "wires": [
+      [
+        "000000000000000a"
+      ]
+    ]
+  },
+  {
+    "id": "000000000000000a",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Préparer requête get_live_streams",
+    "func": "const xtreamClient = global.get('xtreamClient');\nconst cfg = global.get('xtreamConfig');\nmsg.liveCategoriesRaw = Array.isArray(msg.payload) ? msg.payload : [];\nmsg.url = xtreamClient.playerApiUrl(cfg.source, 'get_live_streams');\nmsg.method = 'GET';\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1150,
+    "y": 140,
+    "wires": [
+      [
+        "000000000000000b"
+      ]
+    ]
+  },
+  {
+    "id": "000000000000000b",
+    "type": "http request",
+    "z": "0000000000000001",
+    "name": "GET get_live_streams (source)",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 1350,
+    "y": 140,
+    "wires": [
+      [
+        "000000000000000c"
+      ]
+    ]
+  },
+  {
+    "id": "000000000000000c",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Filtrer + stocker cache LIVE",
+    "func": "const filterEngine = global.get('filterEngine');\nconst rules = global.get('filterRules') || {};\nconst categories = msg.liveCategoriesRaw || [];\nconst streams = Array.isArray(msg.payload) ? msg.payload : [];\nconst result = filterEngine.filterContent(categories, streams, rules.live || {});\nglobal.set('liveCategories', result.categories);\nglobal.set('liveStreams', result.items);\nglobal.set('liveLastRefresh', Date.now());\nnode.status({ fill: 'green', shape: 'dot', text: result.items.length + ' chaînes / ' + result.categories.length + ' catégories' });\nreturn null;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1550,
+    "y": 140,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "000000000000000d",
+    "type": "comment",
+    "z": "0000000000000001",
+    "name": "3. Branche VOD : fetch source -> filtre -> cache global",
+    "info": "",
+    "x": 750,
+    "y": 220,
+    "wires": []
+  },
+  {
+    "id": "000000000000000e",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Préparer requête get_vod_categories",
+    "func": "const xtreamClient = global.get('xtreamClient');\nconst cfg = global.get('xtreamConfig');\nmsg.url = xtreamClient.playerApiUrl(cfg.source, 'get_vod_categories');\nmsg.method = 'GET';\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 750,
+    "y": 340,
+    "wires": [
+      [
+        "000000000000000f"
+      ]
+    ]
+  },
+  {
+    "id": "000000000000000f",
+    "type": "http request",
+    "z": "0000000000000001",
+    "name": "GET get_vod_categories (source)",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 950,
+    "y": 340,
+    "wires": [
+      [
+        "0000000000000010"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000010",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Préparer requête get_vod_streams",
+    "func": "const xtreamClient = global.get('xtreamClient');\nconst cfg = global.get('xtreamConfig');\nmsg.vodCategoriesRaw = Array.isArray(msg.payload) ? msg.payload : [];\nmsg.url = xtreamClient.playerApiUrl(cfg.source, 'get_vod_streams');\nmsg.method = 'GET';\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1150,
+    "y": 340,
+    "wires": [
+      [
+        "0000000000000011"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000011",
+    "type": "http request",
+    "z": "0000000000000001",
+    "name": "GET get_vod_streams (source)",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 1350,
+    "y": 340,
+    "wires": [
+      [
+        "0000000000000012"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000012",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Filtrer + stocker cache VOD",
+    "func": "const filterEngine = global.get('filterEngine');\nconst rules = global.get('filterRules') || {};\nconst categories = msg.vodCategoriesRaw || [];\nconst streams = Array.isArray(msg.payload) ? msg.payload : [];\nconst result = filterEngine.filterContent(categories, streams, rules.vod || {});\nglobal.set('vodCategories', result.categories);\nglobal.set('vodStreams', result.items);\nglobal.set('vodLastRefresh', Date.now());\nnode.status({ fill: 'green', shape: 'dot', text: result.items.length + ' films / ' + result.categories.length + ' catégories' });\nreturn null;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1550,
+    "y": 340,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "0000000000000013",
+    "type": "comment",
+    "z": "0000000000000001",
+    "name": "4. Branche SERIES : fetch source -> filtre -> cache global",
+    "info": "",
+    "x": 750,
+    "y": 420,
+    "wires": []
+  },
+  {
+    "id": "0000000000000014",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Préparer requête get_series_categories",
+    "func": "const xtreamClient = global.get('xtreamClient');\nconst cfg = global.get('xtreamConfig');\nmsg.url = xtreamClient.playerApiUrl(cfg.source, 'get_series_categories');\nmsg.method = 'GET';\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 750,
+    "y": 540,
+    "wires": [
+      [
+        "0000000000000015"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000015",
+    "type": "http request",
+    "z": "0000000000000001",
+    "name": "GET get_series_categories (source)",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 950,
+    "y": 540,
+    "wires": [
+      [
+        "0000000000000016"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000016",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Préparer requête get_series",
+    "func": "const xtreamClient = global.get('xtreamClient');\nconst cfg = global.get('xtreamConfig');\nmsg.seriesCategoriesRaw = Array.isArray(msg.payload) ? msg.payload : [];\nmsg.url = xtreamClient.playerApiUrl(cfg.source, 'get_series');\nmsg.method = 'GET';\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1150,
+    "y": 540,
+    "wires": [
+      [
+        "0000000000000017"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000017",
+    "type": "http request",
+    "z": "0000000000000001",
+    "name": "GET get_series (source)",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 1350,
+    "y": 540,
+    "wires": [
+      [
+        "0000000000000018"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000018",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Filtrer + stocker cache SERIES",
+    "func": "const filterEngine = global.get('filterEngine');\nconst rules = global.get('filterRules') || {};\nconst categories = msg.seriesCategoriesRaw || [];\nconst series = Array.isArray(msg.payload) ? msg.payload : [];\nconst result = filterEngine.filterContent(categories, series, rules.series || {});\nglobal.set('seriesCategories', result.categories);\nglobal.set('seriesStreams', result.items);\nglobal.set('seriesLastRefresh', Date.now());\nnode.status({ fill: 'green', shape: 'dot', text: result.items.length + ' séries / ' + result.categories.length + ' catégories' });\nreturn null;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1550,
+    "y": 540,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "0000000000000019",
+    "type": "comment",
+    "z": "0000000000000001",
+    "name": "5. API locale : GET /player_api.php (compatible Xtream)",
+    "info": "",
+    "x": 150,
+    "y": 660,
+    "wires": []
+  },
+  {
+    "id": "000000000000001a",
+    "type": "http in",
+    "z": "0000000000000001",
+    "name": "GET /player_api.php",
+    "url": "/player_api.php",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 780,
+    "wires": [
+      [
+        "000000000000001b"
+      ]
+    ]
+  },
+  {
+    "id": "000000000000001b",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Vérifier identifiants locaux",
+    "func": "const cfg = global.get('xtreamConfig') || {};\nconst q = (msg.req && msg.req.query) || {};\nconst local = cfg.localAuth || {};\nif (!local.username || !local.password || q.username !== local.username || q.password !== local.password) {\n    return [null, msg];\n}\nreturn [msg, null];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 350,
+    "y": 780,
+    "wires": [
+      [
+        "000000000000001d"
+      ],
+      [
+        "000000000000001c"
+      ]
+    ]
+  },
+  {
+    "id": "000000000000001c",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Réponse 401 (identifiants invalides)",
+    "func": "msg.statusCode = 401;\nmsg.payload = {\n    user_info: { auth: 0, status: 'Disabled', message: 'Invalid username or password' },\n    server_info: {},\n};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 550,
+    "y": 860,
+    "wires": [
+      [
+        "000000000000001e"
+      ]
+    ]
+  },
+  {
+    "id": "000000000000001d",
+    "type": "switch",
+    "z": "0000000000000001",
+    "name": "Router selon action",
+    "property": "req.query.action",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "eq",
+        "v": "get_live_categories",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "get_live_streams",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "get_vod_categories",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "get_vod_streams",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "get_vod_info",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "get_series_categories",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "get_series",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "get_series_info",
+        "vt": "str"
+      },
+      {
+        "t": "else"
+      }
+    ],
+    "checkall": "false",
+    "repair": false,
+    "outputs": 9,
+    "x": 550,
+    "y": 780,
+    "wires": [
+      [
+        "0000000000000020"
+      ],
+      [
+        "0000000000000021"
+      ],
+      [
+        "0000000000000022"
+      ],
+      [
+        "0000000000000023"
+      ],
+      [
+        "0000000000000024"
+      ],
+      [
+        "0000000000000026"
+      ],
+      [
+        "0000000000000027"
+      ],
+      [
+        "0000000000000028"
+      ],
+      [
+        "000000000000001f"
+      ]
+    ]
+  },
+  {
+    "id": "000000000000001e",
+    "type": "http response",
+    "z": "0000000000000001",
+    "name": "Réponse JSON player_api.php",
+    "statusCode": "",
+    "headers": {},
+    "x": 1350,
+    "y": 1100,
+    "wires": []
+  },
+  {
+    "id": "000000000000001f",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Construire handshake (login sans action)",
+    "func": "const cfg = global.get('xtreamConfig') || {};\nconst src = cfg.source || {};\nconst q = (msg.req && msg.req.query) || {};\nconst now = Math.floor(Date.now() / 1000);\nmsg.payload = {\n    user_info: {\n        username: q.username,\n        password: q.password,\n        message: '',\n        auth: 1,\n        status: 'Active',\n        exp_date: null,\n        is_trial: '0',\n        active_cons: '0',\n        created_at: null,\n        max_connections: '1',\n        allowed_output_formats: ['m3u8', 'ts'],\n    },\n    server_info: {\n        url: src.host,\n        port: String(src.port || 80),\n        https_port: String(src.httpsPort || src.port || 443),\n        server_protocol: src.https ? 'https' : 'http',\n        rtmp_port: '0',\n        timezone: cfg.timezone || 'Europe/Paris',\n        timestamp_now: now,\n        time_now: new Date().toISOString(),\n    },\n};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 750,
+    "y": 1420,
+    "wires": [
+      [
+        "000000000000001e"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000020",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Répondre : catégories live filtrées",
+    "func": "msg.payload = global.get('liveCategories') || [];\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 750,
+    "y": 780,
+    "wires": [
+      [
+        "000000000000001e"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000021",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Répondre : chaînes live filtrées",
+    "func": "let items = global.get('liveStreams') || [];\nconst catId = (msg.req.query || {}).category_id;\nif (catId) items = items.filter((i) => String(i.category_id) === String(catId));\nmsg.payload = items;\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 750,
+    "y": 860,
+    "wires": [
+      [
+        "000000000000001e"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000022",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Répondre : catégories VOD filtrées",
+    "func": "msg.payload = global.get('vodCategories') || [];\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 750,
+    "y": 940,
+    "wires": [
+      [
+        "000000000000001e"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000023",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Répondre : films filtrés",
+    "func": "let items = global.get('vodStreams') || [];\nconst catId = (msg.req.query || {}).category_id;\nif (catId) items = items.filter((i) => String(i.category_id) === String(catId));\nmsg.payload = items;\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 750,
+    "y": 1020,
+    "wires": [
+      [
+        "000000000000001e"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000024",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Vérifier film autorisé puis proxy get_vod_info",
+    "func": "const xtreamClient = global.get('xtreamClient');\nconst cfg = global.get('xtreamConfig');\nconst vodId = (msg.req.query || {}).vod_id;\nconst items = global.get('vodStreams') || [];\nconst allowed = items.some((i) => String(i.stream_id) === String(vodId));\nif (!allowed) {\n    msg.statusCode = 404;\n    msg.payload = {};\n    return [null, msg];\n}\nmsg.url = xtreamClient.playerApiUrl(cfg.source, 'get_vod_info', { vod_id: vodId });\nmsg.method = 'GET';\nreturn [msg, null];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 750,
+    "y": 1100,
+    "wires": [
+      [
+        "0000000000000025"
+      ],
+      [
+        "000000000000001e"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000025",
+    "type": "http request",
+    "z": "0000000000000001",
+    "name": "GET get_vod_info (proxy source)",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 950,
+    "y": 1100,
+    "wires": [
+      [
+        "000000000000001e"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000026",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Répondre : catégories séries filtrées",
+    "func": "msg.payload = global.get('seriesCategories') || [];\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 750,
+    "y": 1180,
+    "wires": [
+      [
+        "000000000000001e"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000027",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Répondre : séries filtrées",
+    "func": "let items = global.get('seriesStreams') || [];\nconst catId = (msg.req.query || {}).category_id;\nif (catId) items = items.filter((i) => String(i.category_id) === String(catId));\nmsg.payload = items;\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 750,
+    "y": 1260,
+    "wires": [
+      [
+        "000000000000001e"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000028",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Vérifier série autorisée puis proxy get_series_info",
+    "func": "const xtreamClient = global.get('xtreamClient');\nconst cfg = global.get('xtreamConfig');\nconst seriesId = (msg.req.query || {}).series_id;\nconst items = global.get('seriesStreams') || [];\nconst allowed = items.some((i) => String(i.series_id) === String(seriesId));\nif (!allowed) {\n    msg.statusCode = 404;\n    msg.payload = {};\n    return [null, msg];\n}\nmsg.url = xtreamClient.playerApiUrl(cfg.source, 'get_series_info', { series_id: seriesId });\nmsg.method = 'GET';\nreturn [msg, null];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 750,
+    "y": 1340,
+    "wires": [
+      [
+        "0000000000000029"
+      ],
+      [
+        "000000000000001e"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000029",
+    "type": "http request",
+    "z": "0000000000000001",
+    "name": "GET get_series_info (proxy source)",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 950,
+    "y": 1340,
+    "wires": [
+      [
+        "000000000000001e"
+      ]
+    ]
+  },
+  {
+    "id": "000000000000002a",
+    "type": "comment",
+    "z": "0000000000000001",
+    "name": "6. API locale : GET /get.php (playlist M3U des chaînes live filtrées)",
+    "info": "",
+    "x": 150,
+    "y": 1540,
+    "wires": []
+  },
+  {
+    "id": "000000000000002b",
+    "type": "http in",
+    "z": "0000000000000001",
+    "name": "GET /get.php",
+    "url": "/get.php",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 1660,
+    "wires": [
+      [
+        "000000000000002c"
+      ]
+    ]
+  },
+  {
+    "id": "000000000000002c",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Vérifier identifiants locaux",
+    "func": "const cfg = global.get('xtreamConfig') || {};\nconst q = (msg.req && msg.req.query) || {};\nconst local = cfg.localAuth || {};\nif (!local.username || !local.password || q.username !== local.username || q.password !== local.password) {\n    return [null, msg];\n}\nreturn [msg, null];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 350,
+    "y": 1660,
+    "wires": [
+      [
+        "000000000000002d"
+      ],
+      [
+        "000000000000002e"
+      ]
+    ]
+  },
+  {
+    "id": "000000000000002d",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Générer M3U depuis le cache LIVE",
+    "func": "const cfg = global.get('xtreamConfig') || {};\nconst src = cfg.source || {};\nconst proto = src.https ? 'https' : 'http';\nconst port = src.port ? ':' + src.port : '';\nconst items = global.get('liveStreams') || [];\nconst cats = global.get('liveCategories') || [];\nconst catMap = {};\ncats.forEach((c) => { catMap[String(c.category_id)] = c.category_name; });\nconst lines = ['#EXTM3U'];\nitems.forEach((it) => {\n    const group = catMap[String(it.category_id)] || '';\n    const logo = it.stream_icon || '';\n    const streamUrl = `${proto}://${src.host}${port}/live/${src.username}/${src.password}/${it.stream_id}.ts`;\n    lines.push(`#EXTINF:-1 tvg-id=\"${it.epg_channel_id || ''}\" tvg-logo=\"${logo}\" group-title=\"${group}\",${it.name}`);\n    lines.push(streamUrl);\n});\nmsg.payload = lines.join('\\n');\nmsg.headers = { 'Content-Type': 'application/x-mpegurl' };\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 550,
+    "y": 1660,
+    "wires": [
+      [
+        "000000000000002f"
+      ]
+    ]
+  },
+  {
+    "id": "000000000000002e",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Réponse 401",
+    "func": "msg.statusCode = 401;\nmsg.payload = 'Unauthorized';\nmsg.headers = { 'Content-Type': 'text/plain' };\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 550,
+    "y": 1740,
+    "wires": [
+      [
+        "000000000000002f"
+      ]
+    ]
+  },
+  {
+    "id": "000000000000002f",
+    "type": "http response",
+    "z": "0000000000000001",
+    "name": "Réponse M3U",
+    "statusCode": "",
+    "headers": {},
+    "x": 750,
+    "y": 1660,
+    "wires": []
+  },
+  {
+    "id": "0000000000000030",
+    "type": "comment",
+    "z": "0000000000000001",
+    "name": "7. Administration : statut, rechargement config, refresh manuel (header x-admin-token)",
+    "info": "",
+    "x": 150,
+    "y": 1860,
+    "wires": []
+  },
+  {
+    "id": "0000000000000031",
+    "type": "http response",
+    "z": "0000000000000001",
+    "name": "Réponse admin",
+    "statusCode": "",
+    "headers": {},
+    "x": 1150,
+    "y": 2060,
+    "wires": []
+  },
+  {
+    "id": "0000000000000032",
+    "type": "http in",
+    "z": "0000000000000001",
+    "name": "GET /admin/status",
+    "url": "/admin/status",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 1980,
+    "wires": [
+      [
+        "0000000000000033"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000033",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Vérifier x-admin-token",
+    "func": "const cfg = global.get('xtreamConfig') || {};\nconst token = (msg.req.headers || {})['x-admin-token'];\nif (!cfg.adminToken || token !== cfg.adminToken) {\n    return [null, msg];\n}\nreturn [msg, null];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 350,
+    "y": 1980,
+    "wires": [
+      [
+        "0000000000000034"
+      ],
+      [
+        "000000000000003b"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000034",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Construire le statut du cache",
+    "func": "msg.payload = {\n    live: { count: (global.get('liveStreams') || []).length, lastRefresh: global.get('liveLastRefresh') || null },\n    vod: { count: (global.get('vodStreams') || []).length, lastRefresh: global.get('vodLastRefresh') || null },\n    series: { count: (global.get('seriesStreams') || []).length, lastRefresh: global.get('seriesLastRefresh') || null },\n};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 550,
+    "y": 1980,
+    "wires": [
+      [
+        "0000000000000031"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000035",
+    "type": "http in",
+    "z": "0000000000000001",
+    "name": "POST /admin/reload-config",
+    "url": "/admin/reload-config",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 2140,
+    "wires": [
+      [
+        "0000000000000036"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000036",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Vérifier x-admin-token",
+    "func": "const cfg = global.get('xtreamConfig') || {};\nconst token = (msg.req.headers || {})['x-admin-token'];\nif (!cfg.adminToken || token !== cfg.adminToken) {\n    return [null, msg];\n}\nreturn [msg, null];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 350,
+    "y": 2140,
+    "wires": [
+      [
+        "0000000000000037"
+      ],
+      [
+        "000000000000003b"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000037",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Recharger config.json + filters.json",
+    "func": "const configLoader = global.get('configLoader');\nconst configDir = env.get('XTREAM_CONFIG_DIR') || '/home/pi/.node-red/xtream-filter/config';\ntry {\n    const { config, filters } = configLoader.loadAll(configDir);\n    global.set('xtreamConfig', config);\n    global.set('filterRules', filters);\n    msg.payload = { status: 'reloaded' };\n} catch (err) {\n    msg.statusCode = 500;\n    msg.payload = { error: err.message };\n}\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 550,
+    "y": 2140,
+    "wires": [
+      [
+        "0000000000000031"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000038",
+    "type": "http in",
+    "z": "0000000000000001",
+    "name": "POST /admin/refresh",
+    "url": "/admin/refresh",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 2300,
+    "wires": [
+      [
+        "0000000000000039"
+      ]
+    ]
+  },
+  {
+    "id": "0000000000000039",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Vérifier x-admin-token",
+    "func": "const cfg = global.get('xtreamConfig') || {};\nconst token = (msg.req.headers || {})['x-admin-token'];\nif (!cfg.adminToken || token !== cfg.adminToken) {\n    return [null, msg];\n}\nreturn [msg, null];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 350,
+    "y": 2300,
+    "wires": [
+      [
+        "000000000000003a"
+      ],
+      [
+        "000000000000003b"
+      ]
+    ]
+  },
+  {
+    "id": "000000000000003a",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Répondre immédiatement + déclencher le rafraîchissement",
+    "func": "const triggerMsg = { _msgid: msg._msgid };\nmsg.payload = { status: 'refresh triggered' };\nreturn [msg, triggerMsg];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 550,
+    "y": 2300,
+    "wires": [
+      [
+        "0000000000000031"
+      ],
+      [
+        "0000000000000006"
+      ]
+    ]
+  },
+  {
+    "id": "000000000000003b",
+    "type": "function",
+    "z": "0000000000000001",
+    "name": "Réponse 403",
+    "func": "msg.statusCode = 403;\nmsg.payload = { error: 'Forbidden' };\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 750,
+    "y": 2460,
+    "wires": [
+      [
+        "0000000000000031"
+      ]
+    ]
+  }
+]

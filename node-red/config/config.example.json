@@ -1,0 +1,15 @@
+{
+  "source": {
+    "host": "xtream.exemple.com",
+    "port": 80,
+    "https": false,
+    "username": "SOURCE_USERNAME",
+    "password": "SOURCE_PASSWORD"
+  },
+  "localAuth": {
+    "username": "SOURCE_USERNAME",
+    "password": "SOURCE_PASSWORD"
+  },
+  "adminToken": "change-moi-token-admin",
+  "timezone": "Europe/Paris"
+}
