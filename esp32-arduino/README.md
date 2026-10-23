@@ -1,6 +1,12 @@
-# Version Arduino IDE : fond sonore + insultes aléatoires
+# Version Arduino IDE : fond sonore + insultes aléatoires (un seul fichier, sans bibliothèque)
 
-Sketch : `esp32_usb_jukebox/esp32_usb_jukebox.ino` (⚠️ **non compilé ni testé sur matériel** : écrit sans carte ni toolchain Arduino sous la main).
+Sketch : `esp32_usb_jukebox/esp32_usb_jukebox.ino` — **seul le core « esp32 by Espressif » ≥ 3.0 est nécessaire**.
+Le décodeur MP3 ([minimp3](https://github.com/lieff/minimp3), domaine public CC0), le pilote USB Mass Storage et le lecteur FAT32 sont inclus dans le fichier.
+
+## Utilisation
+1. Gestionnaire de cartes → installer *esp32 by Espressif Systems* (≥ 3.0).
+2. Carte : `ESP32S3 Dev Module`, **USB CDC On Boot : Disabled**, CPU 240 MHz.
+3. Ouvrir le `.ino`, téléverser par le port **UART**, moniteur série 115200 bauds.
 
 ## Câblage
 | MAX98357A | ESP32-S3 |
@@ -10,25 +16,21 @@ Sketch : `esp32_usb_jukebox/esp32_usb_jukebox.ino` (⚠️ **non compilé ni tes
 | DIN       | GPIO 47  |
 | GAIN      | GND      |
 | VIN / GND | 5 V / GND |
-| SD        | non connecté (canal gauche+droit mélangés) |
 
-- Alimentez la carte par le port **UART** ; la clé USB va sur le port **USB natif (OTG)** avec un adaptateur OTG. Sur la DevKitC-1, il faut souder le jumper « USB-OTG » (ou alimenter la clé en 5 V) pour que la clé soit alimentée.
-- Sur la v1.1, la LED RGB est sur le GPIO 38, donc le GPIO 48 est libre. Le GPIO 45 est une broche de strapping : si le démarrage pose problème, débranchez BCLK pendant le flash/reset.
+Clé USB sur le port **USB natif (OTG)** via un adaptateur OTG ; sur la DevKitC-1, souder le jumper « USB-OTG » (ou fournir 5 V à la clé) pour qu'elle soit alimentée. Pas de hub USB.
 
-## Clé USB (FAT32)
+## Clé USB
+FAT32 (partition MBR ou clé sans partition), secteurs de 512 octets (exFAT / NTFS / GPT non supportés).
 ```
 fond/1.mp3        -> boucle à 45 %
 Insultes/*.mp3    -> 1 fichier au hasard toutes les 1 à 5 min, mixé par-dessus le fond
 ```
-Idéalement des MP3 en 44,1 kHz (les autres fréquences sont rééchantillonnées grossièrement).
-
-## Dépendances (Arduino IDE)
-1. **Carte** : Gestionnaire de cartes → « esp32 by Espressif Systems » **≥ 3.0** ; choisir `ESP32S3 Dev Module`, option **USB CDC On Boot : Disabled**, USB Mode : *USB-OTG (TinyUSB)* ou *Hardware CDC and JTAG* (pas de Serial sur le port natif).
-2. **Décodeur MP3** : bibliothèque [arduino-libhelix](https://github.com/pschatzmann/arduino-libhelix) (Croquis → Inclure une bibliothèque → Ajouter la bibliothèque .ZIP).
-3. **Pilote clé USB (MSC host)** : n'est *pas* fourni avec le core Arduino. Copiez dans le dossier du sketch (à côté du `.ino`) les fichiers du composant Espressif
-   [`usb/usb_host_msc`](https://github.com/espressif/idf-extra-components/tree/master/usb/usb_host_msc) :
-   `src/msc_host.c`, `src/msc_scsi_bot.c`, `src/msc_host_vfs.c`, `include/msc_host.h`, `include/msc_host_vfs.h`, `private_include/msc_common.h`, `private_include/msc_scsi_bot.h`.
-   Si la compilation échoue sur des en-têtes ESP-IDF internes, utilisez plutôt la version ESP-IDF du dépôt (`../esp32-player`), qui télécharge ce composant automatiquement.
+Les noms de dossiers `fond` et `Insultes` sont résolus en noms courts 8.3 (insensible à la casse) : ils tiennent dans 8 caractères, donc OK. Les fichiers d'insultes peuvent avoir des noms longs. Les MP3 illisibles (ex. `._xxx` créés par macOS) sont ignorés. Toute fréquence/mono/stéréo est acceptée (rééchantillonnage grossier vers 44,1 kHz).
 
 ## Réglages
-Constantes en tête du `.ino` : broches, `BG_VOL_PCT` (45), `FG_VOL_PCT`, délais min/max des insultes.
+En tête du `.ino` : broches, `BG_VOL_PCT` (45), `FG_VOL_PCT`, `insultMinMs` / `insultMaxMs`.
+
+## État des tests
+- **Testé sur PC** (`host-test/`) : lecture FAT32 (image sans partition et image MBR, noms longs), décodage MP3 (44,1 kHz stéréo et 22,05 kHz mono), mixage à 45 %, boucle du fond sans coupure, tirage aléatoire sans répétition, fichier parasite ignoré.
+  `g++ -std=gnu++17 -O2 -Ihost-test/shim host-test/host_test.cpp -o host_test && ./host_test image.img sortie.pcm 40`
+- **Non testé sur matériel** : la partie USB host (API `usb_host` du core), l'I2S et la charge CPU réelle (deux décodages simultanés) n'ont pas pu être exécutés ici. Si la compilation ou l'énumération de la clé échoue, envoyez-moi les messages du moniteur série.
