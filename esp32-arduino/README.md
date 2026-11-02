@@ -27,6 +27,20 @@ Insultes/*.mp3    -> 1 fichier au hasard toutes les 1 à 5 min, mixé par-dessus
 ```
 Les noms de dossiers `fond` et `Insultes` sont résolus en noms courts 8.3 (insensible à la casse) : ils tiennent dans 8 caractères, donc OK. Les fichiers d'insultes peuvent avoir des noms longs. Les MP3 illisibles (ex. `._xxx` créés par macOS) sont ignorés. Toute fréquence/mono/stéréo est acceptée (rééchantillonnage grossier vers 44,1 kHz).
 
+## Console série (115200 bauds)
+À chaque branchement de la clé, le contenu de la racine, de `/fond` et de `/Insultes` est affiché (noms longs, taille en Ko, fichiers ignorés signalés), suivi des messages de lecture :
+```
+===== Contenu de la clé USB =====
+ /fond :
+   1.MP3  (189 Ko)
+ /Insultes :
+   Autre.mp3  (49 Ko)
+=================================
+Fond : /fond/1.mp3
+Prochaine insulte dans 142 s
+Insulte : Autre.mp3
+```
+
 ## Réglages
 En tête du `.ino` : broches, `BG_VOL_PCT` (45), `FG_VOL_PCT`, `insultMinMs` / `insultMaxMs`.
 

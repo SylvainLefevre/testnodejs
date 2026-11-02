@@ -44,6 +44,7 @@ static uint32_t insultMaxMs = 5UL * 60UL * 1000UL;   // 5 min
 // ============================ Types communs (avant minimp3 : voir note de build) ============================
 struct DirEnt {
   char name[13];       // nom court "NOM.EXT"
+  char lname[92];      // nom long (UTF-8), vide s'il n'y en a pas
   uint8_t attr;
   uint32_t cluster;
   uint32_t size;
@@ -2206,16 +2207,27 @@ static uint32_t fatNext(uint32_t c) {
 static bool dirWalk(uint32_t cluster, DirCb cb, void *ctx) {
   uint8_t sec[512];
   uint32_t guard = 0;
+  uint16_t lfn[13 * 7];                                     // nom long en cours d'assemblage (UTF-16)
+  bool lfnOn = false;
   while (clusterOk(cluster) && guard++ < 100000) {
     for (uint32_t s = 0; s < secPerClus; s++) {
       if (!usbReadSectors(clusterLba(cluster) + s, 1, sec)) return false;
       for (int e = 0; e < 16; e++) {
         const uint8_t *p = sec + 32 * e;
         if (p[0] == 0x00) return false;                     // fin du répertoire
-        if (p[0] == 0xE5 || p[0] == '.') continue;          // effacé, "." et ".."
+        if (p[0] == 0xE5) { lfnOn = false; continue; }      // effacé
         uint8_t attr = p[11];
-        if ((attr & 0x0F) == 0x0F) continue;                // entrée de nom long
-        if (attr & (0x08 | 0x02 | 0x04)) continue;          // volume, caché, système
+        if ((attr & 0x0F) == 0x0F) {                        // entrée de nom long
+          int seq = p[0] & 0x1F;
+          if (p[0] & 0x40) { memset(lfn, 0, sizeof(lfn)); lfnOn = true; }
+          if (lfnOn && seq >= 1 && seq <= 7) {
+            static const uint8_t off[13] = {1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30};
+            for (int i = 0; i < 13; i++) lfn[(seq - 1) * 13 + i] = rd16(p + off[i]);
+          }
+          continue;
+        }
+        if (p[0] == '.') { lfnOn = false; continue; }       // "." et ".."
+        if (attr & (0x08 | 0x02 | 0x04)) { lfnOn = false; continue; }   // volume, caché, système
         DirEnt d;
         int n = 0;
         for (int i = 0; i < 8 && p[i] != ' '; i++) d.name[n++] = p[i];
@@ -2224,6 +2236,18 @@ static bool dirWalk(uint32_t cluster, DirCb cb, void *ctx) {
           for (int i = 8; i < 11 && p[i] != ' '; i++) d.name[n++] = p[i];
         }
         d.name[n] = 0;
+        d.lname[0] = 0;
+        if (lfnOn) {                                        // UTF-16 -> UTF-8
+          int o = 0;
+          for (int i = 0; i < 13 * 7 && lfn[i] && lfn[i] != 0xFFFF && o < (int)sizeof(d.lname) - 4; i++) {
+            uint16_t c = lfn[i];
+            if (c < 0x80) d.lname[o++] = (char)c;
+            else if (c < 0x800) { d.lname[o++] = 0xC0 | (c >> 6); d.lname[o++] = 0x80 | (c & 0x3F); }
+            else { d.lname[o++] = 0xE0 | (c >> 12); d.lname[o++] = 0x80 | ((c >> 6) & 0x3F); d.lname[o++] = 0x80 | (c & 0x3F); }
+          }
+          d.lname[o] = 0;
+        }
+        lfnOn = false;
         d.attr = attr;
         d.cluster = (rd16(p + 20) << 16) | rd16(p + 26);
         d.size = rd32(p + 28);
@@ -2428,6 +2452,36 @@ static void scheduleInsult() {
   Serial.printf("Prochaine insulte dans %lu s\n", (unsigned long)((nextInsultAt - millis()) / 1000));
 }
 
+// --- affichage du contenu de la clé dans la console série ---
+static bool cbList(const DirEnt &e, void *c) {
+  (*(int *)c)++;
+  const char *shown = e.lname[0] ? e.lname : e.name;
+  if (e.attr & 0x10) Serial.printf("   [dossier] %s\n", shown);
+  else Serial.printf("   %s  (%lu Ko)%s\n", shown, (unsigned long)((e.size + 1023) / 1024), isMp3(e) ? "" : "   <- ignoré (pas un .mp3)");
+  return false;
+}
+
+static void listFolder(const char *path) {
+  DirEnt dir;
+  uint32_t cluster = rootCluster;
+  if (strcmp(path, "/") != 0) {
+    if (!fatFind(path, &dir) || !(dir.attr & 0x10)) { Serial.printf(" %s : INTROUVABLE\n", path); return; }
+    cluster = dir.cluster;
+  }
+  Serial.printf(" %s :\n", path);
+  int n = 0;
+  dirWalk(cluster, cbList, &n);
+  if (n == 0) Serial.println("   (vide)");
+}
+
+static void listUsb() {
+  Serial.println("===== Contenu de la clé USB =====");
+  listFolder("/");
+  listFolder("/fond");
+  listFolder(INSULT_DIR);
+  Serial.println("=================================");
+}
+
 static bool startBackground() {
   DirEnt e;
   if (!fatFind(BG_PATH, &e) || (e.attr & 0x10)) { Serial.printf("%s introuvable\n", BG_PATH); return false; }
@@ -2474,7 +2528,9 @@ static void audioMix() {
 static void playerStep() {
   if (!mounted) {
     if (diskArrived()) {
-      if (fatMount() && startBackground()) { mounted = true; scheduleInsult(); }
+      bool fsOk = fatMount();
+      if (fsOk) listUsb();
+      if (fsOk && startBackground()) { mounted = true; scheduleInsult(); }
       else delay(2000);
     } else delay(50);
     return;
@@ -2487,7 +2543,7 @@ static void playerStep() {
     DirEnt e;
     if (pickInsult(&e)) {
       voiceOpen(fg, e);
-      Serial.printf("Insulte : %s\n", e.name);
+      Serial.printf("Insulte : %s\n", e.lname[0] ? e.lname : e.name);
     } else scheduleInsult();
   }
   if (fg.active && fg.ended && fifoCount(fg) == 0) {              // insulte terminée
