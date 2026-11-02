@@ -56,6 +56,8 @@ struct FFile {
   uint32_t chunkPos, chunkLen;
 };
 
+typedef bool (*DirCb)(const DirEnt &, void *);   // callback de parcours de répertoire
+
 #define FIFO_N 16384            // échantillons int16 (stéréo entrelacé), puissance de 2
 #define IN_BUF 8192
 
@@ -2199,7 +2201,6 @@ static uint32_t fatNext(uint32_t c) {
   return rd32(fatCache + (c * 4) % 512) & 0x0FFFFFFF;
 }
 
-typedef bool (*DirCb)(const DirEnt &, void *);
 
 // Parcourt un répertoire (entrées longues ignorées, on utilise les noms courts). true si le callback a stoppé.
 static bool dirWalk(uint32_t cluster, DirCb cb, void *ctx) {
