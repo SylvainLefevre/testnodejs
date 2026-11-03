@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <string>
 
 extern uint32_t g_millis;                       // horloge virtuelle (avance avec l'audio écrit)
 static inline uint32_t millis() { return g_millis; }

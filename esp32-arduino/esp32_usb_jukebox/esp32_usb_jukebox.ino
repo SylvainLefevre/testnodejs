@@ -1,33 +1,33 @@
 /*
- * ESP32-S3 + MAX98357A + clé USB  —  UN SEUL FICHIER, AUCUNE BIBLIOTHÈQUE À INSTALLER
+ * ESP32-S3 + MAX98357A + clé USB  —  fond sonore + insultes aléatoires
  *
  *   /fond/1.mp3      -> joué en boucle, volume 45 %
  *   /Insultes/ (*.mp3) -> un fichier au hasard toutes les 1 à 5 min, mixé par-dessus le fond
  *
  * Câblage MAX98357A : LRC=GPIO48, BCLK(BLK)=GPIO45, DIN=GPIO47, GAIN=GND, VIN=5V, GND=GND
- * Clé USB (FAT32, table MBR ou sans partition) sur le port USB natif (OTG) via un adaptateur OTG.
+ * Clé USB (FAT32) sur le port USB natif (OTG) via un adaptateur OTG.
  *
- * Carte Arduino : "ESP32S3 Dev Module", core esp32 >= 3.0 (Espressif)
+ * UNE SEULE bibliothèque à installer : "EspUsbHost" (Gestionnaire de bibliothèques, auteur
+ * TANAKA Masayuki) — elle gère la clé USB et la monte comme un système de fichiers Arduino.
+ * Le décodeur MP3 (minimp3, domaine public CC0) est inclus dans ce fichier.
+ *
+ * Carte Arduino : "ESP32S3 Dev Module", core esp32 >= 3.2.0 (Espressif)
  *   USB CDC On Boot : Disabled     (Serial = port UART ; le port natif est utilisé en host)
  *   CPU Frequency   : 240 MHz
- *
- * Contenu de ce fichier :
- *   1. réglages
- *   2. minimp3 (décodeur MP3, domaine public CC0 - https://github.com/lieff/minimp3)
- *   3. pilote USB Mass Storage (Bulk-Only / SCSI) au-dessus de l'API usb_host du core
- *   4. lecteur FAT32 en lecture seule (noms courts 8.3, insensible à la casse)
- *   5. lecteur : voix fond + voix insulte, mixage, sortie I2S
  */
 #include <Arduino.h>
+#include <FS.h>
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+#include <string>
+#include <vector>
 #ifndef HOST_TEST
 #include <ESP_I2S.h>
-#include "usb/usb_host.h"
+#include "EspUsbHost.h"
 #endif
 
-// ============================ 1. Réglages ============================
+// ============================ Réglages ============================
 #define PIN_BCLK 45   // BLK
 #define PIN_LRC  48   // LRC / WS
 #define PIN_DIN  47   // DIN
@@ -41,30 +41,13 @@ static const char *INSULT_DIR = "/Insultes";
 static uint32_t insultMinMs = 1UL * 60UL * 1000UL;   // 1 min
 static uint32_t insultMaxMs = 5UL * 60UL * 1000UL;   // 5 min
 
-// ============================ Types communs (avant minimp3 : voir note de build) ============================
-struct DirEnt {
-  char name[13];       // nom court "NOM.EXT"
-  char lname[92];      // nom long (UTF-8), vide s'il n'y en a pas
-  uint8_t attr;
-  uint32_t cluster;
-  uint32_t size;
-};
-
-struct FFile {
-  uint32_t first, size, pos;
-  uint32_t curCl, curIdx;      // cluster courant et son index dans la chaîne
-  uint8_t *chunk;              // cache de lecture (8 secteurs)
-  uint32_t chunkPos, chunkLen;
-};
-
-typedef bool (*DirCb)(const DirEnt &, void *);   // callback de parcours de répertoire
-
+// ============================ Types (avant minimp3 : l'IDE Arduino génère les prototypes avant la 1re fonction) ============================
 #define FIFO_N 16384            // échantillons int16 (stéréo entrelacé), puissance de 2
 #define IN_BUF 8192
 
 struct Voice {
   void *dec;                   // mp3dec_t (défini par minimp3)
-  FFile file;
+  File file;
   uint8_t *in;
   int inLen;
   bool fileEof, ended, active;
@@ -75,7 +58,7 @@ struct Voice {
 
 #pragma GCC optimize ("O3")
 
-// ============================ 2. minimp3 ============================
+// ============================ minimp3 ============================
 #define MINIMP3_IMPLEMENTATION
 #define MINIMP3_ONLY_MP3
 #ifndef MINIMP3_H
@@ -1944,417 +1927,57 @@ void mp3dec_f32_to_s16(const float *in, int16_t *out, int num_samples)
 #endif /* MINIMP3_FLOAT_OUTPUT */
 #endif /* MINIMP3_IMPLEMENTATION && !_MINIMP3_IMPLEMENTATION_GUARD */
 
-// ============================ 3. USB Mass Storage (host) ============================
+// ============================ Clé USB (via EspUsbHost) ============================
 static inline uint32_t umin(uint32_t a, uint32_t b) { return a < b ? a : b; }
-static inline uint32_t rd16(const uint8_t *p) { return p[0] | (p[1] << 8); }
-static inline uint32_t rd32(const uint8_t *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24); }
-static inline uint32_t be32(const uint8_t *p) { return ((uint32_t)p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]; }
+
+static fs::FS &diskFs();                       // système de fichiers de la clé
+static bool diskArrived();                     // true quand la clé est montée
+static bool diskGone();                        // true si la clé a été retirée
+static void diskRelease();
 
 #ifndef HOST_TEST
+static EspUsbHost usb;
+static EspUsbHostMscFS usbMassStorage;
+static volatile bool usbGone = false;
 
-#define XFER_MAX 4096                       // 8 secteurs par lecture
-
-static usb_host_client_handle_t uClient;
-static usb_device_handle_t uDev;
-static usb_transfer_t *uXfer, *uCtrl;
-static SemaphoreHandle_t uSem;
-static volatile bool uNew = false, uGone = false;
-static volatile uint8_t uNewAddr = 0;
-static bool uAttached = false, uReady = false;
-static uint8_t uIf, uEpIn, uEpOut;
-static uint16_t uInMps = 64, uOutMps = 64;
-static uint32_t cbwTag = 1;
-
-struct __attribute__((packed)) CBW {
-  uint32_t sig, tag, len;
-  uint8_t flags, lun, cbLen, cb[16];
-};
-
-static void uClientCb(const usb_host_client_event_msg_t *msg, void *) {
-  if (msg->event == USB_HOST_CLIENT_EVENT_NEW_DEV) {
-    if (!uAttached) { uNewAddr = msg->new_dev.address; uNew = true; }
-  } else if (msg->event == USB_HOST_CLIENT_EVENT_DEV_GONE) {
-    if (uAttached && msg->dev_gone.dev_hdl == uDev) uGone = true;
-  }
-}
-
-static void uXferCb(usb_transfer_t *) { xSemaphoreGive(uSem); }
-
-static void usbLibTask(void *) {
-  for (;;) { uint32_t flags; usb_host_lib_handle_events(portMAX_DELAY, &flags); }
-}
-static void usbClientTask(void *) {
-  for (;;) usb_host_client_handle_events(uClient, portMAX_DELAY);
-}
-
-// Transfert bulk. 0 = ok, 1 = STALL (endpoint remis en service), -1 = erreur
-static int bulk(uint8_t ep, uint8_t *data, uint32_t len, uint32_t *actual) {
-  bool in = ep & 0x80;
-  uint32_t mps = in ? uInMps : uOutMps;
-  uint32_t n = in ? ((len + mps - 1) / mps) * mps : len;
-  if (n > XFER_MAX + 64) return -1;
-  if (!in) memcpy(uXfer->data_buffer, data, len);
-  uXfer->device_handle = uDev;
-  uXfer->bEndpointAddress = ep;
-  uXfer->num_bytes = n;
-  uXfer->callback = uXferCb;
-  uXfer->context = nullptr;
-  uXfer->timeout_ms = 0;
-  while (xSemaphoreTake(uSem, 0) == pdTRUE) {}
-  if (usb_host_transfer_submit(uXfer) != ESP_OK) return -1;
-  if (xSemaphoreTake(uSem, pdMS_TO_TICKS(4000)) != pdTRUE) {
-    usb_host_endpoint_halt(uDev, ep);
-    usb_host_endpoint_flush(uDev, ep);
-    xSemaphoreTake(uSem, pdMS_TO_TICKS(1000));
-    usb_host_endpoint_clear(uDev, ep);
-    return -1;
-  }
-  if (uXfer->status == USB_TRANSFER_STATUS_STALL) { usb_host_endpoint_clear(uDev, ep); return 1; }
-  if (uXfer->status != USB_TRANSFER_STATUS_COMPLETED) return -1;
-  uint32_t got = uXfer->actual_num_bytes;
-  if (in) memcpy(data, uXfer->data_buffer, umin(got, len));
-  if (actual) *actual = got;
-  return 0;
-}
-
-// Commande SCSI via Bulk-Only Transport. 0 = ok, 1 = commande échouée, -1 = erreur de transport
-static int botCmd(const uint8_t *cdb, uint8_t cbLen, bool in, uint8_t *data, uint32_t len, uint32_t *got) {
-  CBW cbw;
-  memset(&cbw, 0, sizeof(cbw));
-  cbw.sig = 0x43425355;
-  cbw.tag = cbwTag++;
-  cbw.len = len;
-  cbw.flags = in ? 0x80 : 0x00;
-  cbw.cbLen = cbLen;
-  memcpy(cbw.cb, cdb, cbLen);
-  if (bulk(uEpOut, (uint8_t *)&cbw, 31, nullptr) != 0) return -1;
-  uint32_t a = 0;
-  bool dataStall = false;
-  if (len) {
-    int r = bulk(in ? uEpIn : uEpOut, data, len, &a);
-    if (r < 0) return -1;
-    dataStall = (r == 1);
-  }
-  uint8_t csw[16];
-  uint32_t cg = 0;
-  int r = bulk(uEpIn, csw, 13, &cg);
-  if (r == 1) r = bulk(uEpIn, csw, 13, &cg);
-  if (r != 0 || cg != 13) return -1;
-  if (rd32(csw) != 0x53425355 || rd32(csw + 4) != cbw.tag) return -1;
-  if (got) *got = a;
-  if (csw[12] == 0) return dataStall ? 1 : 0;
-  return csw[12] == 1 ? 1 : -1;
-}
-
-static void botReset() {            // Bulk-Only Mass Storage Reset + fin des STALL
-  usb_setup_packet_t *s = (usb_setup_packet_t *)uCtrl->data_buffer;
-  s->bmRequestType = 0x21; s->bRequest = 0xFF; s->wValue = 0; s->wIndex = uIf; s->wLength = 0;
-  uCtrl->device_handle = uDev;
-  uCtrl->bEndpointAddress = 0;
-  uCtrl->num_bytes = sizeof(usb_setup_packet_t);
-  uCtrl->callback = uXferCb;
-  uCtrl->context = nullptr;
-  uCtrl->timeout_ms = 0;
-  while (xSemaphoreTake(uSem, 0) == pdTRUE) {}
-  if (usb_host_transfer_submit_control(uClient, uCtrl) == ESP_OK) xSemaphoreTake(uSem, pdMS_TO_TICKS(2000));
-  usb_host_endpoint_clear(uDev, uEpIn);
-  usb_host_endpoint_clear(uDev, uEpOut);
-}
-
-static void scsiSense() {
-  uint8_t c[6] = {0x03, 0, 0, 0, 18, 0};
-  uint8_t d[18];
-  botCmd(c, 6, true, d, 18, nullptr);
-}
-
-// Lit n secteurs de 512 octets (n <= 8)
-static bool usbReadSectors(uint32_t lba, uint32_t n, uint8_t *buf) {
-  for (int tries = 0; tries < 3; tries++) {
-    uint8_t c[10] = {0x28, 0, (uint8_t)(lba >> 24), (uint8_t)(lba >> 16), (uint8_t)(lba >> 8), (uint8_t)lba,
-                     0, (uint8_t)(n >> 8), (uint8_t)n, 0};
-    uint32_t g = 0;
-    int r = botCmd(c, 10, true, buf, n * 512, &g);
-    if (r == 0 && g == n * 512) return true;
-    if (r < 0) botReset(); else scsiSense();
-    delay(10);
-  }
-  return false;
-}
-
-static void usbRelease() {
-  if (uXfer) { usb_host_transfer_free(uXfer); uXfer = nullptr; }
-  if (uCtrl) { usb_host_transfer_free(uCtrl); uCtrl = nullptr; }
-  if (uAttached) {
-    usb_host_interface_release(uClient, uDev, uIf);
-    usb_host_device_close(uClient, uDev);
-  }
-  uAttached = false;
-  uReady = false;
-  uGone = false;
-}
-
-// Ouvre le périphérique, trouve l'interface Mass Storage (classe 8 / SCSI / Bulk-Only) et le disque
-static bool usbAttach(uint8_t addr) {
-  if (usb_host_device_open(uClient, addr, &uDev) != ESP_OK) return false;
-  const usb_config_desc_t *cfg = nullptr;
-  if (usb_host_get_active_config_descriptor(uDev, &cfg) != ESP_OK || !cfg) { usb_host_device_close(uClient, uDev); return false; }
-  const uint8_t *p = (const uint8_t *)cfg;
-  uint32_t total = cfg->wTotalLength;
-  bool inMsc = false;
-  int intf = -1;
-  uEpIn = uEpOut = 0;
-  for (uint32_t i = 0; i + 2 <= total && p[i] != 0; i += p[i]) {
-    if (p[i + 1] == 4) {                                            // interface
-      inMsc = (p[i + 5] == 0x08 && p[i + 6] == 0x06 && p[i + 7] == 0x50 && p[i + 3] == 0);
-      if (inMsc) { intf = p[i + 2]; uEpIn = uEpOut = 0; }
-    } else if (p[i + 1] == 5 && inMsc && (p[i + 3] & 3) == 2) {     // endpoint bulk
-      uint8_t ep = p[i + 2];
-      uint16_t mps = p[i + 4] | (p[i + 5] << 8);
-      if (ep & 0x80) { uEpIn = ep; uInMps = mps; } else { uEpOut = ep; uOutMps = mps; }
-    }
-  }
-  if (intf < 0 || !uEpIn || !uEpOut) { usb_host_device_close(uClient, uDev); return false; }
-  uIf = intf;
-  if (usb_host_interface_claim(uClient, uDev, uIf, 0) != ESP_OK) { usb_host_device_close(uClient, uDev); return false; }
-  uAttached = true;
-  if (usb_host_transfer_alloc(XFER_MAX + 64, 0, &uXfer) != ESP_OK ||
-      usb_host_transfer_alloc(64, 0, &uCtrl) != ESP_OK) { usbRelease(); return false; }
-
-  // Attend que le disque soit prêt (TEST UNIT READY), puis vérifie la taille de bloc
-  for (int i = 0; i < 40 && !uReady; i++) {
-    uint8_t tur[6] = {0, 0, 0, 0, 0, 0};
-    int r = botCmd(tur, 6, false, nullptr, 0, nullptr);
-    if (r == 0) { uReady = true; break; }
-    if (r < 0) botReset(); else scsiSense();
-    delay(250);
-  }
-  if (!uReady) { Serial.println("USB : disque pas prêt"); usbRelease(); return false; }
-  uint8_t cap[8], c[10] = {0x25};
-  uint32_t g = 0;
-  if (botCmd(c, 10, true, cap, 8, &g) != 0 || g < 8 || be32(cap + 4) != 512) {
-    Serial.println("USB : taille de bloc non supportée (512 requis)");
-    usbRelease();
-    return false;
-  }
-  Serial.printf("USB : disque prêt (%lu secteurs)\n", (unsigned long)(be32(cap) + 1));
-  return true;
-}
+static fs::FS &diskFs() { return usbMassStorage; }
 
 static bool diskArrived() {
-  static int attachTries = 0;
-  if (!uAttached && uNew) {
-    uNew = false;
-    if (!usbAttach(uNewAddr)) {                 // périphérique non supporté ou pas prêt : quelques essais
-      if (++attachTries < 5) { delay(1000); uNew = true; }
-      return false;
-    }
-    attachTries = 0;
-  }
-  return uAttached && uReady;
-}
-static bool diskGone() { return uGone; }
-static void diskRelease() { usbRelease(); }
-
-#endif  // !HOST_TEST
-
-// ============================ 4. FAT32 en lecture seule ============================
-static uint32_t fatLba, dataLba, rootCluster, secPerClus;
-static uint8_t fatCache[512];
-static uint32_t fatCacheSec = 0xFFFFFFFF;
-
-static bool isFat32Boot(const uint8_t *s) {
-  return s[510] == 0x55 && s[511] == 0xAA && rd16(s + 11) == 512 && s[13] != 0 &&
-         rd16(s + 22) == 0 && rd32(s + 36) != 0 && memcmp(s + 82, "FAT32", 5) == 0;
-}
-
-static bool fatMount() {
-  uint8_t s[512];
-  fatCacheSec = 0xFFFFFFFF;
-  if (!usbReadSectors(0, 1, s)) return false;
-  uint32_t base = 0;
-  if (!isFat32Boot(s)) {                                   // MBR : première partition FAT32
-    if (s[510] != 0x55 || s[511] != 0xAA) { Serial.println("FAT : secteur 0 invalide"); return false; }
-    bool found = false;
-    for (int i = 0; i < 4; i++) {
-      const uint8_t *e = s + 446 + 16 * i;
-      if (e[4] == 0x0B || e[4] == 0x0C) { base = rd32(e + 8); found = true; break; }
-    }
-    if (!found) { Serial.println("FAT : pas de partition FAT32 (exFAT/NTFS/GPT non supportés)"); return false; }
-    if (!usbReadSectors(base, 1, s) || !isFat32Boot(s)) { Serial.println("FAT : secteur de boot invalide"); return false; }
-  }
-  secPerClus = s[13];
-  uint32_t reserved = rd16(s + 14), nFats = s[16], fatSz = rd32(s + 36);
-  rootCluster = rd32(s + 44);
-  fatLba = base + reserved;
-  dataLba = fatLba + nFats * fatSz;
-  return true;
-}
-
-static inline uint32_t clusterLba(uint32_t c) { return dataLba + (c - 2) * secPerClus; }
-static inline bool clusterOk(uint32_t c) { return c >= 2 && c < 0x0FFFFFF0; }
-
-static uint32_t fatNext(uint32_t c) {
-  uint32_t sec = fatLba + (c * 4) / 512;
-  if (sec != fatCacheSec) {
-    if (!usbReadSectors(sec, 1, fatCache)) return 0x0FFFFFFF;
-    fatCacheSec = sec;
-  }
-  return rd32(fatCache + (c * 4) % 512) & 0x0FFFFFFF;
-}
-
-
-// Parcourt un répertoire (entrées longues ignorées, on utilise les noms courts). true si le callback a stoppé.
-static bool dirWalk(uint32_t cluster, DirCb cb, void *ctx) {
-  uint8_t sec[512];
-  uint32_t guard = 0;
-  uint16_t lfn[13 * 7];                                     // nom long en cours d'assemblage (UTF-16)
-  bool lfnOn = false;
-  while (clusterOk(cluster) && guard++ < 100000) {
-    for (uint32_t s = 0; s < secPerClus; s++) {
-      if (!usbReadSectors(clusterLba(cluster) + s, 1, sec)) return false;
-      for (int e = 0; e < 16; e++) {
-        const uint8_t *p = sec + 32 * e;
-        if (p[0] == 0x00) return false;                     // fin du répertoire
-        if (p[0] == 0xE5) { lfnOn = false; continue; }      // effacé
-        uint8_t attr = p[11];
-        if ((attr & 0x0F) == 0x0F) {                        // entrée de nom long
-          int seq = p[0] & 0x1F;
-          if (p[0] & 0x40) { memset(lfn, 0, sizeof(lfn)); lfnOn = true; }
-          if (lfnOn && seq >= 1 && seq <= 7) {
-            static const uint8_t off[13] = {1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30};
-            for (int i = 0; i < 13; i++) lfn[(seq - 1) * 13 + i] = rd16(p + off[i]);
-          }
-          continue;
-        }
-        if (p[0] == '.') { lfnOn = false; continue; }       // "." et ".."
-        if (attr & (0x08 | 0x02 | 0x04)) { lfnOn = false; continue; }   // volume, caché, système
-        DirEnt d;
-        int n = 0;
-        for (int i = 0; i < 8 && p[i] != ' '; i++) d.name[n++] = p[i];
-        if (p[8] != ' ') {
-          d.name[n++] = '.';
-          for (int i = 8; i < 11 && p[i] != ' '; i++) d.name[n++] = p[i];
-        }
-        d.name[n] = 0;
-        d.lname[0] = 0;
-        if (lfnOn) {                                        // UTF-16 -> UTF-8
-          int o = 0;
-          for (int i = 0; i < 13 * 7 && lfn[i] && lfn[i] != 0xFFFF && o < (int)sizeof(d.lname) - 4; i++) {
-            uint16_t c = lfn[i];
-            if (c < 0x80) d.lname[o++] = (char)c;
-            else if (c < 0x800) { d.lname[o++] = 0xC0 | (c >> 6); d.lname[o++] = 0x80 | (c & 0x3F); }
-            else { d.lname[o++] = 0xE0 | (c >> 12); d.lname[o++] = 0x80 | ((c >> 6) & 0x3F); d.lname[o++] = 0x80 | (c & 0x3F); }
-          }
-          d.lname[o] = 0;
-        }
-        lfnOn = false;
-        d.attr = attr;
-        d.cluster = (rd16(p + 20) << 16) | rd16(p + 26);
-        d.size = rd32(p + 28);
-        if (cb(d, ctx)) return true;
-      }
-    }
-    cluster = fatNext(cluster);
-  }
+  if (usbMassStorage.mounted()) return true;
+  static uint32_t last = 0;
+  static int attempts = 0;
+  uint32_t now = millis();
+  if (now - last < 1000) return false;               // une tentative par seconde
+  last = now;
+  usbGone = false;
+  if (usbMassStorage.begin(usb, "/usb")) { attempts = 0; return true; }
+  if (attempts++ % 5 == 0) Serial.printf("Clé USB : montage impossible (%s) - clé branchée ?\n", usb.lastErrorName());
   return false;
 }
+static bool diskGone() { return usbGone || !usbMassStorage.mounted(); }
+static void diskRelease() { usbMassStorage.end(); usbGone = false; }
+#endif
 
-static bool nameEq(const char *a, const char *b) {
-  for (;; a++, b++) {
-    char x = *a, y = *b;
-    if (x >= 'a' && x <= 'z') x -= 32;
-    if (y >= 'a' && y <= 'z') y -= 32;
-    if (x != y) return false;
-    if (!x) return true;
-  }
-}
-
-struct FindCtx { const char *name; DirEnt found; };
-static bool cbFind(const DirEnt &e, void *c) {
-  FindCtx *f = (FindCtx *)c;
-  if (nameEq(e.name, f->name)) { f->found = e; return true; }
-  return false;
-}
-
-// Résout "/dir/fichier.ext" (noms 8.3, insensible à la casse)
-static bool fatFind(const char *path, DirEnt *out) {
-  uint32_t cluster = rootCluster;
-  char comp[16];
-  while (*path == '/') path++;
-  for (;;) {
-    int n = 0;
-    while (*path && *path != '/') { if (n < 15) comp[n++] = *path; path++; }
-    comp[n] = 0;
-    while (*path == '/') path++;
-    FindCtx f;
-    f.name = comp;
-    if (!dirWalk(cluster, cbFind, &f)) return false;
-    if (!*path) { *out = f.found; return true; }
-    if (!(f.found.attr & 0x10)) return false;
-    cluster = f.found.cluster;
-  }
-}
-
-static bool isMp3(const DirEnt &e) {
-  size_t n = strlen(e.name);
-  return !(e.attr & 0x10) && e.size > 0 && n > 4 && nameEq(e.name + n - 4, ".MP3");
-}
-
-// --- lecture de fichier ---
-static void fileOpen(FFile &f, const DirEnt &e, uint8_t *chunk) {
-  f.first = e.cluster; f.size = e.size; f.pos = 0;
-  f.curCl = e.cluster; f.curIdx = 0;
-  f.chunk = chunk; f.chunkPos = 0; f.chunkLen = 0;
-}
-
-static bool fileFill(FFile &f) {
-  uint32_t clBytes = secPerClus * 512;
-  uint32_t idx = f.pos / clBytes;
-  if (idx < f.curIdx) { f.curCl = f.first; f.curIdx = 0; }
-  while (f.curIdx < idx) {
-    f.curCl = fatNext(f.curCl);
-    if (!clusterOk(f.curCl)) return false;
-    f.curIdx++;
-  }
-  uint32_t secInCl = (f.pos % clBytes) / 512;
-  uint32_t startOff = idx * clBytes + secInCl * 512;
-  uint32_t left = (f.size - startOff + 511) / 512;
-  uint32_t nsec = umin(umin(8, secPerClus - secInCl), left);
-  if (nsec == 0 || !usbReadSectors(clusterLba(f.curCl) + secInCl, nsec, f.chunk)) return false;
-  f.chunkPos = startOff;
-  f.chunkLen = umin(nsec * 512, f.size - startOff);
-  return true;
-}
-
-static int fileRead(FFile &f, uint8_t *buf, uint32_t n) {
-  if (f.pos >= f.size) return 0;
-  n = umin(n, f.size - f.pos);
-  uint32_t total = 0;
-  while (total < n) {
-    if (f.pos >= f.chunkPos && f.pos < f.chunkPos + f.chunkLen) {
-      uint32_t m = umin(n - total, f.chunkPos + f.chunkLen - f.pos);
-      memcpy(buf + total, f.chunk + (f.pos - f.chunkPos), m);
-      f.pos += m;
-      total += m;
-    } else if (!fileFill(f)) break;
-  }
-  return (int)total;
-}
-
-// ============================ 5. Lecteur ============================
+// ============================ Lecteur ============================
 static Voice bg, fg;
 static bool mounted = false;
 static uint32_t nextInsultAt = 0;
-static uint32_t lastInsultCluster = 0;
+static std::string lastInsult;
 static int emptyRetries = 0;
+
+static bool isMp3Name(const char *n) {
+  size_t len = strlen(n);
+  if (len < 5 || n[0] == '.' ) return false;                      // ignore aussi les ._xxx de macOS
+  const char *e = n + len - 4;
+  return e[0] == '.' && (e[1] | 32) == 'm' && (e[2] | 32) == 'p' && e[3] == '3';
+}
 
 static bool voiceAlloc(Voice &v) {
   v.dec = malloc(sizeof(mp3dec_t));
   v.in = (uint8_t *)malloc(IN_BUF);
   v.fifo = (int16_t *)malloc(FIFO_N * sizeof(int16_t));
-  v.file.chunk = (uint8_t *)malloc(4096);
   v.active = false;
-  return v.dec && v.in && v.fifo && v.file.chunk;
+  return v.dec && v.in && v.fifo;
 }
 
 static inline uint32_t fifoCount(const Voice &v) { return v.w - v.r; }
@@ -2363,25 +1986,28 @@ static inline void fifoPush(Voice &v, int16_t s) { v.fifo[v.w & (FIFO_N - 1)] = 
 static inline int16_t fifoPop(Voice &v) { return v.fifo[v.r++ & (FIFO_N - 1)]; }
 
 static void voiceRewind(Voice &v) {
-  v.file.pos = 0;
-  v.file.chunkLen = 0;
+  v.file.seek(0);
   v.inLen = 0;
   v.fileEof = false;
   v.ended = false;
   mp3dec_init((mp3dec_t *)v.dec);
 }
 
-static void voiceOpen(Voice &v, const DirEnt &e) {
-  fileOpen(v.file, e, v.file.chunk);
+static bool voiceOpen(Voice &v, const char *path) {
+  if (v.file) v.file.close();
+  v.file = diskFs().open(path, FILE_READ);
+  if (!v.file || v.file.isDirectory()) { Serial.printf("Ouverture impossible : %s\n", path); return false; }
   voiceRewind(v);
   v.r = v.w = v.acc = 0;
   v.frames = 0;
   v.active = true;
+  return true;
 }
 
 static void voiceStop(Voice &v) {
   v.active = false;
   v.r = v.w = 0;
+  if (v.file) v.file.close();
 }
 
 // Décode des trames MP3 dans la FIFO (stéréo, rééchantillonné vers OUT_RATE)
@@ -2390,8 +2016,8 @@ static void voiceFeed(Voice &v) {
   int guard = 0;
   while (v.active && !v.ended && fifoFree(v) >= 8192 && guard++ < 3) {
     if (!v.fileEof && v.inLen < IN_BUF / 2) {
-      int n = fileRead(v.file, v.in + v.inLen, IN_BUF - v.inLen);
-      if (n <= 0) v.fileEof = true; else v.inLen += n;
+      size_t n = v.file.read(v.in + v.inLen, IN_BUF - v.inLen);
+      if (n == 0 || n > (size_t)IN_BUF) v.fileEof = true; else v.inLen += (int)n;
     }
     if (v.inLen <= 0) { v.ended = true; return; }
     mp3dec_frame_info_t info;
@@ -2420,57 +2046,19 @@ static void voiceFeed(Voice &v) {
   }
 }
 
-// --- choix d'une insulte ---
-struct PickCtx { int target, idx, count; DirEnt found; };
-static bool cbCount(const DirEnt &e, void *c) { if (isMp3(e)) ((PickCtx *)c)->count++; return false; }
-static bool cbPick(const DirEnt &e, void *c) {
-  PickCtx *p = (PickCtx *)c;
-  if (isMp3(e) && p->idx++ == p->target) { p->found = e; return true; }
-  return false;
-}
-
-static bool pickInsult(DirEnt *out) {
-  DirEnt dir;
-  if (!fatFind(INSULT_DIR, &dir) || !(dir.attr & 0x10)) { Serial.println("Dossier /Insultes introuvable"); return false; }
-  PickCtx p;
-  p.count = 0; p.idx = 0; p.target = 0;
-  dirWalk(dir.cluster, cbCount, &p);
-  if (p.count == 0) { Serial.println("Aucun mp3 dans /Insultes"); return false; }
-  for (int tries = 0; tries < 6; tries++) {
-    p.idx = 0;
-    p.target = random(p.count);
-    if (!dirWalk(dir.cluster, cbPick, &p)) return false;
-    if (p.count == 1 || p.found.cluster != lastInsultCluster) break;     // pas deux fois de suite la même
-  }
-  lastInsultCluster = p.found.cluster;
-  *out = p.found;
-  return true;
-}
-
-static void scheduleInsult() {
-  nextInsultAt = millis() + (uint32_t)random((long)insultMinMs, (long)insultMaxMs + 1);
-  Serial.printf("Prochaine insulte dans %lu s\n", (unsigned long)((nextInsultAt - millis()) / 1000));
-}
-
 // --- affichage du contenu de la clé dans la console série ---
-static bool cbList(const DirEnt &e, void *c) {
-  (*(int *)c)++;
-  const char *shown = e.lname[0] ? e.lname : e.name;
-  if (e.attr & 0x10) Serial.printf("   [dossier] %s\n", shown);
-  else Serial.printf("   %s  (%lu Ko)%s\n", shown, (unsigned long)((e.size + 1023) / 1024), isMp3(e) ? "" : "   <- ignoré (pas un .mp3)");
-  return false;
-}
-
 static void listFolder(const char *path) {
-  DirEnt dir;
-  uint32_t cluster = rootCluster;
-  if (strcmp(path, "/") != 0) {
-    if (!fatFind(path, &dir) || !(dir.attr & 0x10)) { Serial.printf(" %s : INTROUVABLE\n", path); return; }
-    cluster = dir.cluster;
-  }
+  File d = diskFs().open(path);
+  if (!d || !d.isDirectory()) { Serial.printf(" %s : INTROUVABLE\n", path); return; }
   Serial.printf(" %s :\n", path);
   int n = 0;
-  dirWalk(cluster, cbList, &n);
+  for (File f = d.openNextFile(); f; f = d.openNextFile()) {
+    n++;
+    if (f.isDirectory()) Serial.printf("   [dossier] %s\n", f.name());
+    else Serial.printf("   %s  (%lu Ko)%s\n", f.name(), (unsigned long)((f.size() + 1023) / 1024), isMp3Name(f.name()) ? "" : "   <- ignoré (pas un .mp3)");
+    f.close();
+  }
+  d.close();
   if (n == 0) Serial.println("   (vide)");
 }
 
@@ -2482,10 +2070,31 @@ static void listUsb() {
   Serial.println("=================================");
 }
 
+// --- choix d'une insulte au hasard (jamais deux fois de suite la même) ---
+static bool pickInsult(std::string *path) {
+  File d = diskFs().open(INSULT_DIR);
+  if (!d || !d.isDirectory()) { Serial.println("Dossier /Insultes introuvable"); return false; }
+  std::vector<std::string> names;
+  for (File f = d.openNextFile(); f; f = d.openNextFile()) {
+    if (!f.isDirectory() && f.size() > 0 && isMp3Name(f.name())) names.push_back(f.name());
+    f.close();
+  }
+  d.close();
+  if (names.empty()) { Serial.println("Aucun mp3 dans /Insultes"); return false; }
+  std::string pick = names[random((long)names.size())];
+  for (int tries = 0; names.size() > 1 && pick == lastInsult && tries < 10; tries++) pick = names[random((long)names.size())];
+  lastInsult = pick;
+  *path = std::string(INSULT_DIR) + "/" + pick;
+  return true;
+}
+
+static void scheduleInsult() {
+  nextInsultAt = millis() + (uint32_t)random((long)insultMinMs, (long)insultMaxMs + 1);
+  Serial.printf("Prochaine insulte dans %lu s\n", (unsigned long)((nextInsultAt - millis()) / 1000));
+}
+
 static bool startBackground() {
-  DirEnt e;
-  if (!fatFind(BG_PATH, &e) || (e.attr & 0x10)) { Serial.printf("%s introuvable\n", BG_PATH); return false; }
-  voiceOpen(bg, e);
+  if (!voiceOpen(bg, BG_PATH)) return false;
   Serial.printf("Fond : %s\n", BG_PATH);
   return true;
 }
@@ -2528,10 +2137,10 @@ static void audioMix() {
 static void playerStep() {
   if (!mounted) {
     if (diskArrived()) {
-      bool fsOk = fatMount();
-      if (fsOk) listUsb();
-      if (fsOk && startBackground()) { mounted = true; scheduleInsult(); }
-      else delay(2000);
+      Serial.println("Clé USB montée");
+      listUsb();
+      if (startBackground()) { mounted = true; scheduleInsult(); }
+      else { Serial.println("-> vérifiez /fond/1.mp3"); diskRelease(); delay(3000); }
     } else delay(50);
     return;
   }
@@ -2540,14 +2149,12 @@ static void playerStep() {
   if (bg.active && bg.ended) voiceRewind(bg);                     // boucle sans coupure (la FIFO contient la fin)
 
   if (!fg.active && (int32_t)(millis() - nextInsultAt) >= 0) {
-    DirEnt e;
-    if (pickInsult(&e)) {
-      voiceOpen(fg, e);
-      Serial.printf("Insulte : %s\n", e.lname[0] ? e.lname : e.name);
-    } else scheduleInsult();
+    std::string p;
+    if (pickInsult(&p) && voiceOpen(fg, p.c_str())) Serial.printf("Insulte : %s\n", p.c_str());
+    else scheduleInsult();
   }
   if (fg.active && fg.ended && fifoCount(fg) == 0) {              // insulte terminée
-    bool empty = (fg.frames == 0);                                // fichier illisible (ex. ._xxx de macOS)
+    bool empty = (fg.frames == 0);                                // fichier illisible
     voiceStop(fg);
     if (empty && ++emptyRetries < 5) nextInsultAt = millis();
     else { emptyRetries = 0; scheduleInsult(); }
@@ -2563,7 +2170,7 @@ static void playerStep() {
 static I2SClass i2s;
 
 static void audioWrite(const int16_t *d, uint32_t frames) {
-  i2s.write((uint8_t *)d, frames * 4);                      // bloquant : cadence la boucle
+  i2s.write((uint8_t *)d, frames * 4);                            // bloquant : cadence la boucle
 }
 
 static void playerTask(void *) {
@@ -2572,7 +2179,8 @@ static void playerTask(void *) {
 
 void setup() {
   Serial.begin(115200);
-  delay(300);
+  delay(1000);
+  Serial.println("Demarrage...");
   randomSeed(esp_random());
   playerInit();
 
@@ -2582,20 +2190,17 @@ void setup() {
     for (;;) delay(1000);
   }
 
-  uSem = xSemaphoreCreateBinary();
-  usb_host_config_t hcfg;
-  memset(&hcfg, 0, sizeof(hcfg));
-  hcfg.intr_flags = ESP_INTR_FLAG_LEVEL1;
-  if (usb_host_install(&hcfg) != ESP_OK) { Serial.println("usb_host_install a échoué"); for (;;) delay(1000); }
-  usb_host_client_config_t ccfg;
-  memset(&ccfg, 0, sizeof(ccfg));
-  ccfg.is_synchronous = false;
-  ccfg.max_num_event_msg = 5;
-  ccfg.async.client_event_callback = uClientCb;
-  ccfg.async.callback_arg = nullptr;
-  if (usb_host_client_register(&ccfg, &uClient) != ESP_OK) { Serial.println("client USB impossible"); for (;;) delay(1000); }
-  xTaskCreatePinnedToCore(usbLibTask, "usb_lib", 4096, nullptr, 5, nullptr, 0);
-  xTaskCreatePinnedToCore(usbClientTask, "usb_cli", 4096, nullptr, 5, nullptr, 0);
+  usb.onDeviceConnected([](const EspUsbHostDeviceInfo &device) {
+    Serial.print("USB connecté : ");
+    espUsbHostPrint(device);
+  });
+  usb.onDeviceDisconnected([](const EspUsbHostDeviceInfo &device) {
+    Serial.print("USB déconnecté : ");
+    espUsbHostPrint(device);
+    usbGone = true;
+  });
+  if (!usb.begin()) Serial.printf("usb.begin() a échoué : %s\n", usb.lastErrorName());
+
   // minimp3 utilise ~17 Ko de pile : le décodage tourne dans une tâche dédiée
   xTaskCreatePinnedToCore(playerTask, "player", 32768, nullptr, 4, nullptr, 1);
   Serial.println("En attente d'une clé USB...");
