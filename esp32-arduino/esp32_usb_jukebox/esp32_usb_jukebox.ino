@@ -1939,6 +1939,7 @@ static void diskRelease();
 static EspUsbHost usb;
 static EspUsbHostMscFS usbMassStorage;
 static volatile bool usbGone = false;
+static volatile bool usbSeen = false;       // un périphérique USB a été détecté au moins une fois
 
 static fs::FS &diskFs() { return usbMassStorage; }
 
@@ -1951,7 +1952,17 @@ static bool diskArrived() {
   last = now;
   usbGone = false;
   if (usbMassStorage.begin(usb, "/usb")) { attempts = 0; return true; }
-  if (attempts++ % 5 == 0) Serial.printf("Clé USB : montage impossible (%s) - clé branchée ?\n", usb.lastErrorName());
+  if (attempts++ % 5 == 0) {
+    if (!usbSeen) {
+      Serial.println("DIAGNOSTIC : aucun périphérique USB détecté.");
+      Serial.println("  1) La clé est-elle alimentée ? (voyant allumé ?) Le port OTG de beaucoup de DevKit ne fournit PAS de 5 V :");
+      Serial.println("     souder le jumper/pont \"USB-OTG\" de la carte, ou alimenter la clé autrement (hub USB alimenté, 5 V externe).");
+      Serial.println("  2) La clé doit être sur le port USB NATIF (OTG, broches GPIO19/20), pas sur le port UART/COM.");
+      Serial.println("  3) Essayez un autre adaptateur OTG / une autre clé (USB 2.0 de préférence).");
+    } else {
+      Serial.printf("DIAGNOSTIC : périphérique détecté mais montage impossible (%s). Clé en FAT32 ? Essayez une autre clé.\n", usb.lastErrorName());
+    }
+  }
   return false;
 }
 static bool diskGone() { return usbGone || !usbMassStorage.mounted(); }
@@ -2191,6 +2202,7 @@ void setup() {
   }
 
   usb.onDeviceConnected([](const EspUsbHostDeviceInfo &device) {
+    usbSeen = true;
     Serial.print("USB connecté : ");
     espUsbHostPrint(device);
   });
