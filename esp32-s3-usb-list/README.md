@@ -1,6 +1,6 @@
-# Lister les fichiers d'une clé USB — ESP32-S3 (USB OTG)
+# Lister les fichiers d'une clé USB — ESP32-S3 (USB OTG, Arduino)
 
-Au branchement d'une clé USB sur le port OTG, l'ESP32-S3 affiche toute son arborescence (fichiers, tailles, dossiers) dans le moniteur série. La liste est réaffichée à chaque nouveau branchement.
+Au branchement d'une clé USB sur le port OTG, l'ESP32-S3 affiche toute son arborescence (fichiers, tailles, dossiers) dans le moniteur série. La liste est réaffichée à chaque nouveau branchement. La clé est lue en lecture seule.
 
 ## Branchement
 
@@ -14,15 +14,15 @@ L'ESP32-S3-DevKitC-1 v1.1 a deux ports USB-C :
         └─────┬─────────────────┬──────┘
               │                 │  (GPIO19 = D-, GPIO20 = D+)
               │                 │
-         PC : flash +      Adaptateur OTG USB-C → USB-A
-         moniteur série         │
+         PC : téléversement  Adaptateur OTG USB-C → USB-A
+         + moniteur série       │
                            Clé USB (FAT32)
 ```
 
-| Port      | Branché sur                      | Rôle                                      |
-|-----------|----------------------------------|-------------------------------------------|
-| **UART**  | PC                               | Alimentation, flash, moniteur série       |
-| **USB**   | Adaptateur OTG → clé USB         | Hôte USB (l'ESP32-S3 lit la clé)          |
+| Port      | Branché sur              | Rôle                                |
+|-----------|--------------------------|-------------------------------------|
+| **UART**  | PC                       | Alimentation, téléversement, moniteur série |
+| **USB**   | Adaptateur OTG → clé USB | Hôte USB (l'ESP32-S3 lit la clé)    |
 
 Le MAX98357A du projet `esp32-s3-bip` (GPIO4/5/6) peut rester branché : il n'utilise pas les mêmes broches.
 
@@ -35,26 +35,25 @@ Par défaut, le port **USB** de la carte ne fournit pas de 5 V vers l'extérieur
 
 ### La clé
 
-- Formatée en **FAT32** (ou FAT16). L'exFAT et le NTFS ne sont pas lus : les clés de plus de 32 Go sont souvent livrées en exFAT.
-- Le programme ne formate jamais la clé (`format_if_mount_failed = false`).
+- Formatée en **FAT32** (ou FAT16). Les clés de plus de 32 Go sont souvent livrées en exFAT, qui peut ne pas être lu.
+- Une seule partition, une seule clé à la fois (pas de hub USB).
 
-## Code
+## Arduino IDE
 
-Projet **ESP-IDF** (v5.1 ou plus) : l'Arduino IDE ne fournit pas de pilote hôte USB pour les clés. Le pilote `espressif/usb_host_msc` est téléchargé automatiquement depuis le registre de composants Espressif au premier build.
-
-```bash
-cd esp32-s3-usb-list
-idf.py set-target esp32s3
-idf.py -p /dev/ttyUSB0 flash monitor
-```
-
-(Remplacer `/dev/ttyUSB0` par le port du connecteur **UART**, par ex. `COM5` sous Windows.)
+1. Core **esp32 by Espressif** en version **3.x** (aucune bibliothèque supplémentaire).
+2. Menu **Outils** :
+   - Carte : **ESP32S3 Dev Module**
+   - USB Mode : **Hardware CDC and JTAG**
+   - USB CDC On Boot : **Disabled** (le moniteur série passe par le port UART)
+3. Brancher le PC sur le port **UART**, téléverser, ouvrir le moniteur série à **115200 bauds**.
+4. Brancher la clé sur le port **USB** via l'adaptateur OTG.
 
 Exemple de sortie :
 
 ```
 En attente d'une clé USB sur le port OTG...
-I (2345) usb_list: Clé détectée (adresse 1)
+Clé détectée : SanDisk  Cruzer Blade
+Capacité : 15267 Mo (31266816 secteurs de 512 octets)
 
 ===== Contenu de la clé USB =====
 musique/
@@ -64,4 +63,14 @@ photos/
     plage.jpg  (2048311 octets)
 lisezmoi.txt  (512 octets)
 ===== 3 fichier(s), 3 dossier(s), 2137067 octets =====
+
+Clé retirée. En attente d'une clé USB...
 ```
+
+## Fonctionnement
+
+Le core Arduino-ESP32 n'a pas de bibliothèque « clé USB » toute faite. Le sketch utilise donc directement :
+
+- la pile **hôte USB** d'ESP-IDF incluse dans le core (`usb/usb_host.h`) pour détecter la clé et échanger avec elle ;
+- son propre petit pilote **Mass Storage Bulk-Only** (commandes SCSI INQUIRY, TEST UNIT READY, READ CAPACITY, READ(10)) ;
+- **FatFs** (inclus dans le core) branché sur ce pilote pour lire le système de fichiers.

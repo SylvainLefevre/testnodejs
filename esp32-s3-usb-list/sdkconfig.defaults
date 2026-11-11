@@ -1,8 +1,0 @@
-CONFIG_IDF_TARGET="esp32s3"
-# Console série sur le port "UART" de la carte (le port "USB" sert d'hôte OTG)
-CONFIG_ESP_CONSOLE_UART_DEFAULT=y
-# Noms de fichiers longs
-CONFIG_FATFS_LFN_HEAP=y
-CONFIG_FATFS_MAX_LFN=255
-# Pile confortable pour le parcours récursif des dossiers
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
