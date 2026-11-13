@@ -402,6 +402,7 @@ static void handleNewDevice(uint8_t address) {
 void setup() {
   Serial.begin(115200);
   delay(500);
+  Serial.println("\nDemarrage du sketch...");
 
   eventQueue = xQueueCreate(5, sizeof(UsbEvent));
   xferDone = xSemaphoreCreateBinary();
@@ -410,6 +411,7 @@ void setup() {
   hostConfig.skip_phy_setup = false;
   hostConfig.intr_flags = ESP_INTR_FLAG_LEVEL1;
   ESP_ERROR_CHECK(usb_host_install(&hostConfig));
+  Serial.println("Pile hote USB installee.");
   xTaskCreate(usbLibTask, "usb_lib", 4096, nullptr, 2, nullptr);
 
   usb_host_client_config_t clientConfig = {};
