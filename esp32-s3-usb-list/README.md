@@ -31,7 +31,17 @@ Le MAX98357A du projet `esp32-s3-bip` (GPIO4/5/6) peut rester branché : il n'ut
 Par défaut, le port **USB** de la carte ne fournit pas de 5 V vers l'extérieur : la clé ne s'allume pas. Deux solutions :
 
 - **Ponter les pastilles `USB-OTG` (IN-OUT)** au dos de la carte, près du port USB. Le 5 V venant du port UART est alors envoyé sur le port USB. Vérifie la sérigraphie de ta carte et la doc Espressif avant de souder.
-- **Ou** utiliser un câble/hub OTG alimenté qui fournit lui-même le 5 V à la clé.
+- **Ou** utiliser un câble OTG en Y avec entrée d'alimentation, qui fournit lui-même le 5 V à la clé (pas un hub : les hubs USB ne sont pas gérés).
+- **Ou**, sans souder sur la carte, brancher la clé sur un **connecteur USB-A femelle (breakout)** relié directement aux broches, et ne rien brancher sur le port USB de la carte :
+
+| Breakout USB-A femelle | ESP32-S3     |
+|------------------------|--------------|
+| VBUS (5V)              | 5V           |
+| GND                    | GND          |
+| D−                     | GPIO19       |
+| D+                     | GPIO20       |
+
+  Le 5V de la broche vient du câble branché sur le port UART. Fils de données courts (< 10 cm). Un condensateur de 100 µF entre 5V et GND évite que la carte redémarre quand on branche la clé.
 
 ### La clé
 
