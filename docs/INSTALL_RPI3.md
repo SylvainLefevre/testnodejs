@@ -25,10 +25,16 @@ node -v   # doit afficher v20.x ou plus
 ## 3. Déployer les fichiers du projet
 
 ```bash
-git clone <url-de-votre-fork> ~/xtream-filter-api
+git clone https://github.com/SylvainLefevre/testnodejs.git ~/xtream-filter-api
 cd ~/xtream-filter-api
+git checkout claude/xtream-filtering-node-red-dlucug   # tant que la PR n'est pas mergée sur master
 ```
 
+> Pour retrouver cette URL vous-même (ou si vous travaillez depuis un fork) :
+> ouvrez le repo sur GitHub, cliquez sur le bouton vert **Code**, et copiez
+> l'URL HTTPS (ou SSH si vous avez une clé configurée sur le Pi). Une fois la
+> PR mergée sur `master`, l'étape `git checkout` ci-dessus devient inutile.
+>
 > Si vous n'avez pas `git` sur le Pi, vous pouvez aussi copier le dossier
 > depuis votre machine de dev avec `scp -r . <user-pi>@<ip-du-pi>:~/xtream-filter-api`.
 >
