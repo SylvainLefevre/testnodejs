@@ -1,8 +1,6 @@
 'use strict';
 
 // Moteur de filtrage générique pour les catalogues Xtream (live / vod / series).
-// Chargé dans le contexte global de Node-RED via functionGlobalContext (voir settings-snippet.js)
-// et appelé depuis les nœuds Function du flow "Xtream Filter API".
 
 function normalize(str) {
     return (str || '').toString().toLowerCase();

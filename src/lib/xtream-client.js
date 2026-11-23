@@ -1,7 +1,6 @@
 'use strict';
 
-// Construction des URLs vers l'API Xtream source. Chargé dans le contexte
-// global de Node-RED via functionGlobalContext (voir settings-snippet.js).
+// Construction des URLs vers l'API Xtream source.
 
 function baseUrl(source) {
     const proto = source.https ? 'https' : 'http';

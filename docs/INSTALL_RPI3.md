@@ -1,7 +1,8 @@
 # Installation sur Raspberry Pi 3
 
-Le Pi 3 (4 cœurs Cortex-A53, 1 Go de RAM) est largement suffisant : le flow ne
-manipule que du JSON (catalogue filtré), jamais de flux vidéo.
+Le Pi 3 (4 cœurs Cortex-A53, 1 Go de RAM) est largement suffisant : le
+serveur ne manipule que du JSON (catalogue filtré), jamais de flux vidéo, et
+n'a aucune dépendance npm à installer.
 
 ## 1. Système
 
@@ -9,167 +10,124 @@ manipule que du JSON (catalogue filtré), jamais de flux vidéo.
 sudo apt update && sudo apt full-upgrade -y
 ```
 
-Node-RED recommande une carte SD de 16 Go minimum et, idéalement, de faire
-tourner le système depuis une clé USB/SSD plutôt qu'une carte SD (plus fiable
-dans la durée), mais une carte SD convient pour ce projet vu le faible volume
-d'écritures.
+## 2. Node.js ≥ 18
 
-## 2. Node.js + Node-RED
-
-Utiliser le script d'installation officiel, qui installe une version de
-Node.js adaptée à l'architecture ARM du Pi :
+Le projet utilise le `fetch` natif de Node.js (disponible depuis Node 18),
+donc aucune dépendance npm n'est nécessaire. Installer une version récente
+via le dépôt NodeSource (architecture ARM du Pi gérée automatiquement) :
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/node-red/linux-installers/master/deb/update-nodejs-and-nodered)
-```
-
-Vérifier :
-
-```bash
-node -v
-node-red --version
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+node -v   # doit afficher v20.x ou plus
 ```
 
 ## 3. Déployer les fichiers du projet
 
-Le dossier `node-red/` de ce dépôt doit être copié sur le Pi, par exemple
-dans `~/.node-red/xtream-filter/` :
-
 ```bash
-mkdir -p ~/.node-red/xtream-filter
-# depuis votre machine de dev, ou via git clone directement sur le Pi :
-scp -r node-red/functions node-red/config <user-pi>@<ip-du-pi>:~/.node-red/xtream-filter/
+git clone <url-de-votre-fork> ~/xtream-filter-api
+cd ~/xtream-filter-api
 ```
 
+> Si vous n'avez pas `git` sur le Pi, vous pouvez aussi copier le dossier
+> depuis votre machine de dev avec `scp -r . <user-pi>@<ip-du-pi>:~/xtream-filter-api`.
+>
 > - `<user-pi>` est le nom de l'utilisateur **sur le Raspberry Pi** (celui
 >   créé lors du flashage de la carte SD avec Raspberry Pi Imager, pas
->   forcément `pi` sur les installations récentes). Il est indépendant de
->   l'utilisateur avec lequel vous êtes connecté sur votre machine locale :
->   `scp fichier.txt sylvainl@<ip-du-pi>:...` fonctionne même si vous
->   exécutez la commande en étant vous-même connecté en `sylvainl` ailleurs.
->   Vérifiez-le avec `ssh <user-pi>@<ip-du-pi> whoami` si vous n'êtes pas sûr.
->   Si cet utilisateur n'est pas `pi`, adaptez en conséquence les chemins
->   `/home/pi/...` des étapes 4 et 5 ci-dessous.
+>   forcément `pi` sur les installations récentes), indépendant de
+>   l'utilisateur de votre machine locale. Vérifiez-le avec
+>   `ssh <user-pi>@<ip-du-pi> whoami` si besoin.
 > - `<ip-du-pi>` : utilisez l'**IP locale** du Pi (ex. `192.168.1.x`, visible
->   via `hostname -I` sur le Pi ou dans l'interface de votre routeur) — pas
->   l'IP publique, cette API n'est pas destinée à être exposée sur Internet
->   (voir [Sécurité et exposition réseau](#sécurité-et-exposition-réseau)).
->   Un alias mDNS comme `raspberrypi.local` fonctionne aussi si votre réseau
->   le résout, mais l'IP locale est plus fiable.
+>   via `hostname -I` sur le Pi), pas l'IP publique — cette API n'est pas
+>   destinée à être exposée sur Internet (voir
+>   [Sécurité et exposition réseau](#sécurité-et-exposition-réseau)).
 
-Puis, sur le Pi, créer les fichiers de config réels à partir des exemples :
+Créer les fichiers de config réels à partir des exemples :
 
 ```bash
-cd ~/.node-red/xtream-filter/config
-cp config.example.json config.json
-cp filters.example.json filters.json
-nano config.json    # renseigner l'hôte/identifiants de la source Xtream
-nano filters.json   # définir les règles de filtrage (voir docs/FILTERS.md)
+cd ~/xtream-filter-api
+cp config/config.example.json config/config.json
+cp config/filters.example.json config/filters.json
+nano config/config.json    # renseigner l'hôte/identifiants de la source Xtream
+nano config/filters.json   # définir les règles de filtrage (voir docs/FILTERS.md)
 ```
 
-> `config.json` et `filters.json` contiennent les identifiants de votre
-> source Xtream : ne les commitez pas dans un dépôt public (ils sont exclus
-> par défaut, seuls les `*.example.json` sont versionnés).
+> `config/config.json` et `config/filters.json` contiennent les identifiants
+> de votre source Xtream : ne les commitez pas dans un dépôt public (ils sont
+> exclus par défaut, seuls les `*.example.json` sont versionnés).
 
-## 4. Brancher `functionGlobalContext` dans `settings.js`
-
-Éditer `~/.node-red/settings.js` et ajouter la clé `functionGlobalContext`
-(voir `node-red/settings-snippet.js` pour le détail) :
-
-```js
-const path = require('path');
-const XTREAM_DIR = path.join(process.env.HOME, '.node-red', 'xtream-filter');
-
-module.exports = {
-    // ... reste de votre settings.js existant, ne pas supprimer ...
-
-    functionGlobalContext: {
-        filterEngine: require(path.join(XTREAM_DIR, 'functions', 'filter-engine.js')),
-        xtreamClient: require(path.join(XTREAM_DIR, 'functions', 'xtream-client.js')),
-        configLoader: require(path.join(XTREAM_DIR, 'functions', 'config-loader.js')),
-    },
-};
-```
-
-## 5. Variable d'environnement `XTREAM_CONFIG_DIR`
-
-Le flow lit `config.json`/`filters.json` depuis le dossier pointé par la
-variable d'environnement `XTREAM_CONFIG_DIR` (par défaut
-`/home/pi/.node-red/xtream-filter/config` si non définie). Si vous avez suivi
-les chemins ci-dessus avec l'utilisateur `pi`, la valeur par défaut convient
-déjà. Sinon, définissez-la explicitement dans le service systemd (étape
-suivante).
-
-## 6. Lancer Node-RED en service systemd
-
-Le script d'installation crée normalement déjà un service `nodered.service`.
-Pour fixer la variable d'environnement et s'assurer du démarrage automatique :
+## 4. Tester en direct (avant de passer en service)
 
 ```bash
-sudo systemctl edit nodered.service
+npm start
 ```
 
-Ajouter :
-
-```ini
-[Service]
-Environment=XTREAM_CONFIG_DIR=/home/pi/.node-red/xtream-filter/config
-```
-
-Puis :
+Dans un autre terminal, ou depuis votre machine :
 
 ```bash
+curl "http://<ip-du-pi>:3000/player_api.php?username=<user>&password=<pass>&action=get_live_categories"
+```
+
+Arrêter avec `Ctrl+C` une fois que ça répond correctement.
+
+## 5. Lancer en service systemd (démarrage automatique)
+
+Le fichier `deploy/xtream-filter-api.service` contient un modèle d'unité
+systemd. L'installer :
+
+```bash
+sed -e "s|__USER__|$(whoami)|g" -e "s|__APP_DIR__|$HOME/xtream-filter-api|g" \
+    deploy/xtream-filter-api.service | sudo tee /etc/systemd/system/xtream-filter-api.service
+
 sudo systemctl daemon-reload
-sudo systemctl enable nodered
-sudo systemctl restart nodered
-sudo systemctl status nodered
+sudo systemctl enable xtream-filter-api
+sudo systemctl start xtream-filter-api
+sudo systemctl status xtream-filter-api
 ```
 
-## 7. Importer le flow
-
-1. Ouvrir l'éditeur Node-RED : `http://<ip-du-pi>:1880`
-2. Menu ☰ -> Import -> sélectionner `node-red/flows/xtream-filter.flows.json`
-3. Déployer (bouton "Deploy")
-
-Au déploiement, le nœud "Au déploiement" charge `config.json`/`filters.json`
-puis déclenche un premier rafraîchissement du catalogue (fetch source +
-filtrage). Vérifier dans l'onglet debug/statuts des nœuds que le statut passe
-au vert avec un nombre de chaînes/films/séries.
-
-## 8. Tester
+Logs en direct :
 
 ```bash
-curl "http://<ip-du-pi>:1880/player_api.php?username=<user>&password=<pass>&action=get_live_categories"
-curl "http://<ip-du-pi>:1880/admin/status" -H "x-admin-token: <votre-token-admin>"
+journalctl -u xtream-filter-api -f
+```
+
+## 6. Tester le service
+
+```bash
+curl "http://<ip-du-pi>:3000/player_api.php?username=<user>&password=<pass>&action=get_live_categories"
+curl "http://<ip-du-pi>:3000/admin/status" -H "x-admin-token: <votre-token-admin>"
 ```
 
 Puis configurer votre lecteur IPTV (TiviMate, IPTV Smarters, etc.) en mode
 "Xtream Codes" avec :
-- Serveur : `http://<ip-du-pi>:1880`
-- Utilisateur / mot de passe : ceux définis dans `config.json` -> `localAuth`
+- Serveur : `http://<ip-du-pi>:3000`
+- Utilisateur / mot de passe : ceux définis dans `config/config.json` ->
+  `localAuth`
 
 Voir [API.md](API.md) pour la référence complète des endpoints et
 [FILTERS.md](FILTERS.md) pour écrire vos règles de filtrage.
 
 ## Sécurité et exposition réseau
 
-- Le service n'écoute que ce que Node-RED expose (port 1880 par défaut) : ne
-  l'exposez pas directement sur Internet sans reverse proxy + authentification
-  supplémentaire (les identifiants Xtream transitent en clair sur HTTP par
-  défaut, comme le protocole Xtream Codes standard).
-- Protégez l'éditeur Node-RED lui-même (`http://<ip>:1880`, différent de
-  l'API republiée) avec `adminAuth` dans `settings.js` si le Pi est accessible
-  au-delà de votre réseau local.
-- `adminToken` (dans `config.json`) protège les endpoints `/admin/*` : changez
-  la valeur par défaut avant tout déploiement.
+- Le service n'écoute que sur le port configuré (3000 par défaut, via la
+  variable d'environnement `PORT`) : ne l'exposez pas directement sur
+  Internet sans reverse proxy + authentification supplémentaire (les
+  identifiants Xtream transitent en clair sur HTTP par défaut, comme le
+  protocole Xtream Codes standard).
+- `adminToken` (dans `config.json`) protège les endpoints `/admin/*` :
+  changez la valeur par défaut avant tout déploiement.
 
 ## Maintenance
 
-- **Changer les règles de filtrage** : éditer `filters.json` puis
-  `curl -X POST http://<ip-du-pi>:1880/admin/reload-config -H "x-admin-token: ..."`
-  suivi de `curl -X POST http://<ip-du-pi>:1880/admin/refresh -H "x-admin-token: ..."`
-  (pas besoin de redéployer le flow).
-- **Changer l'intervalle de rafraîchissement automatique** : éditer la
-  propriété "repeat" du nœud inject "Rafraîchissement périodique" dans
-  l'éditeur Node-RED (valeur par défaut : 21600 s = 6h).
-- **Logs** : `journalctl -u nodered -f`.
+- **Changer les règles de filtrage** : éditer `config/filters.json` puis
+  `curl -X POST http://<ip-du-pi>:3000/admin/reload-config -H "x-admin-token: ..."`
+  suivi de `curl -X POST http://<ip-du-pi>:3000/admin/refresh -H "x-admin-token: ..."`
+  (pas besoin de redémarrer le service).
+- **Changer l'intervalle de rafraîchissement automatique** : éditer
+  `refreshIntervalMinutes` dans `config.json` puis recharger/redémarrer.
+- **Changer le port** : variable d'environnement `PORT` dans
+  `/etc/systemd/system/xtream-filter-api.service`, puis
+  `sudo systemctl daemon-reload && sudo systemctl restart xtream-filter-api`.
+- **Mettre à jour le code** : `git pull` dans `~/xtream-filter-api` puis
+  `sudo systemctl restart xtream-filter-api`.
+- **Logs** : `journalctl -u xtream-filter-api -f`.

@@ -1,2 +1,3 @@
-node-red/config/config.json
-node-red/config/filters.json
+config/config.json
+config/filters.json
+node_modules/

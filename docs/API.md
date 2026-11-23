@@ -1,6 +1,7 @@
 # API locale republiée
 
-Base URL : `http://<ip-du-pi>:1880` (port Node-RED par défaut).
+Base URL : `http://<ip-du-pi>:3000` (port par défaut, modifiable via la
+variable d'environnement `PORT`).
 
 Tous les endpoints (sauf `/admin/*`) reproduisent le contrat de l'API Xtream
 Codes standard, avec authentification par `username`/`password` en query
@@ -85,7 +86,7 @@ Protégés par l'en-tête `x-admin-token` (valeur définie dans `config.json`).
 ### `GET /admin/status`
 
 ```bash
-curl http://<ip-du-pi>:1880/admin/status -H "x-admin-token: <token>"
+curl http://<ip-du-pi>:3000/admin/status -H "x-admin-token: <token>"
 ```
 
 ```json
@@ -98,9 +99,8 @@ curl http://<ip-du-pi>:1880/admin/status -H "x-admin-token: <token>"
 
 ### `POST /admin/reload-config`
 
-Recharge `config.json` et `filters.json` depuis le disque sans redémarrer
-Node-RED ni redéployer le flow. À appeler après avoir modifié les règles de
-filtrage.
+Recharge `config.json` et `filters.json` depuis le disque sans redémarrer le
+service. À appeler après avoir modifié les règles de filtrage.
 
 ### `POST /admin/refresh`
 

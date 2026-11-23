@@ -1,0 +1,17 @@
+[Unit]
+Description=Xtream Filter API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__APP_DIR__
+Environment=XTREAM_CONFIG_DIR=__APP_DIR__/config
+Environment=PORT=3000
+ExecStart=/usr/bin/node src/server.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

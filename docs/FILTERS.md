@@ -1,7 +1,7 @@
 # Référence des règles de filtrage (`filters.json`)
 
 `filters.json` contient trois blocs indépendants : `live`, `vod`, `series`.
-Chacun a la même structure, appliquée par `node-red/functions/filter-engine.js`.
+Chacun a la même structure, appliquée par `src/lib/filter-engine.js`.
 
 ```json
 {
@@ -98,9 +98,9 @@ Ignorés silencieusement pour `live` (les chaînes live n'ont pas ces champs).
 - `GET /admin/status` (voir [API.md](API.md)) donne le nombre d'éléments
   retenus par type après le dernier rafraîchissement — utile pour vérifier
   qu'une règle ne filtre pas tout par erreur.
-- Les statuts affichés sous chaque nœud "Filtrer + stocker cache ..." dans
-  l'éditeur Node-RED affichent aussi ces compteurs en temps réel après un
-  déploiement ou un rafraîchissement manuel.
+- Les logs du service (`journalctl -u xtream-filter-api -f`) affichent aussi
+  ces compteurs en temps réel après chaque rafraîchissement (`[cache] live:
+  N éléments / M catégories`).
 - Une regex invalide dans `namePatterns`/`includeRegex`/`excludeRegex` est
   ignorée silencieusement (traitée comme non filtrante) plutôt que de faire
   planter le flow — vérifiez sa syntaxe si le résultat ne correspond pas à

@@ -11,5 +11,7 @@
     "password": "SOURCE_PASSWORD"
   },
   "adminToken": "change-moi-token-admin",
-  "timezone": "Europe/Paris"
+  "timezone": "Europe/Paris",
+  "refreshIntervalMinutes": 360,
+  "httpTimeoutMs": 15000
 }

@@ -1,0 +1,13 @@
+{
+  "name": "xtream-filter-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Filtre une source Xtream Codes (live/VOD/séries) et republie un catalogue filtré via une API locale compatible Xtream.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

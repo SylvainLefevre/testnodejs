@@ -9,8 +9,7 @@ function loadJson(filePath) {
 }
 
 // Lit config.json et filters.json depuis le dossier configDir.
-// Lève une erreur explicite si un fichier est absent ou invalide -
-// c'est au nœud appelant (Function "Load Config") de la reporter via node.error().
+// Lève une erreur explicite si un fichier est absent ou invalide.
 function loadAll(configDir) {
     const config = loadJson(path.join(configDir, 'config.json'));
     const filters = loadJson(path.join(configDir, 'filters.json'));
