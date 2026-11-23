@@ -38,8 +38,24 @@ dans `~/.node-red/xtream-filter/` :
 ```bash
 mkdir -p ~/.node-red/xtream-filter
 # depuis votre machine de dev, ou via git clone directement sur le Pi :
-scp -r node-red/functions node-red/config pi@<ip-du-pi>:~/.node-red/xtream-filter/
+scp -r node-red/functions node-red/config <user-pi>@<ip-du-pi>:~/.node-red/xtream-filter/
 ```
+
+> - `<user-pi>` est le nom de l'utilisateur **sur le Raspberry Pi** (celui
+>   créé lors du flashage de la carte SD avec Raspberry Pi Imager, pas
+>   forcément `pi` sur les installations récentes). Il est indépendant de
+>   l'utilisateur avec lequel vous êtes connecté sur votre machine locale :
+>   `scp fichier.txt sylvainl@<ip-du-pi>:...` fonctionne même si vous
+>   exécutez la commande en étant vous-même connecté en `sylvainl` ailleurs.
+>   Vérifiez-le avec `ssh <user-pi>@<ip-du-pi> whoami` si vous n'êtes pas sûr.
+>   Si cet utilisateur n'est pas `pi`, adaptez en conséquence les chemins
+>   `/home/pi/...` des étapes 4 et 5 ci-dessous.
+> - `<ip-du-pi>` : utilisez l'**IP locale** du Pi (ex. `192.168.1.x`, visible
+>   via `hostname -I` sur le Pi ou dans l'interface de votre routeur) — pas
+>   l'IP publique, cette API n'est pas destinée à être exposée sur Internet
+>   (voir [Sécurité et exposition réseau](#sécurité-et-exposition-réseau)).
+>   Un alias mDNS comme `raspberrypi.local` fonctionne aussi si votre réseau
+>   le résout, mais l'IP locale est plus fiable.
 
 Puis, sur le Pi, créer les fichiers de config réels à partir des exemples :
 
